@@ -9,8 +9,8 @@ $DumpDirectoryTV = "D:\Tablo\Processed_TV"
 $DumpDirectoryMovies = "D:\Tablo\Processed_Movies"
 
 #Exceptions Variables
-$DumpDirectoryExceptions = "\\server\media\ByPass_MCEBuddy_Post_Processing" #File path for $ShowExceptionsList
-$ShowExceptionsList = Get-Content ($TempDownload + "\Show_Post_Processing_Exceptions.txt") #Used to export recordings directly to a path if you want to avoid a post processing process
+$DumpDirectoryExceptions = "\\fsp01\torrent\Downloaded Torrents" #File path for $ShowExceptionsList
+$ShowExceptionsList = Get-Content ($TempDownload + "\Show_Post_Processing_Exceptions.txt") #Used to export recordings directly to a path if you want to avoid a post processing process, only to be used for debugging not offically supported
 $ShowAirDateExceptionsList = Get-Content ($TempDownload + "\Show_Air_Date_Exceptions.txt") #Used to change the file name from what metadata we can pull from the Tablo to the original air date
 
 #Verify exception files exist
@@ -96,6 +96,14 @@ Function Get-TabloMovieorTV ($Recording) {
     }
 }
 
+#Function to checkif the file we are going to create already exists and if so append a timestamp
+Function Check-ForDuplicateFile ($Directory,$FileName) {
+    if (Test-Path -Path $Directory\$FileName -ErrorAction SilentlyContinue) {$FileName + '-' + (Get-Date -Format HH:MM-yyyy-mm-dd) | Set-Variable FileName -Scope Script} #Else do nothing and leave the file name alone.
+}
+
+##########################################################################################################################################################################################################################################################################################################################
+#Start of the actual script
+
 #Create Temp Folders if it does not exist
 if (!(Test-Path -Path $TempDownload)) {New-Item -Path $TempDownload -ItemType dir -Force}
 if (!(Test-Path -Path $DumpDirectoryTV)) {New-Item -Path $DumpDirectoryTV -ItemType dir -Force}
@@ -143,19 +151,27 @@ foreach ($Recording in $Recordings) {
             Invoke-WebRequest -URI ($RecordingURI + $Link) -OutFile $Link
             }
 
+        #Set File name depending on Exceptions List
+        if ($ShowAirDateExceptionsList -match $ShowName) {$FileName = $FileNameAirDate} #Else we will use the the $FileName defined in the metadata function(s)
+
         #Create String for FFMPEG
         $JoinedTSFiles = ((Get-ChildItem).Name) -join '|'
 
         #FFMPEG for TV Shows
         if ($MediaType -eq 'TV') {
+            #Check if the file we are going to create already exists and if so append a timestamp
+            Check-ForDuplicateFile $DumpDirectoryTV $FileName
+
             #Join .TS Clips into a Master Media File for saving
             if ($ShowExceptionsList -match $ShowName) {(& $FFMPEGBinary -y -i "concat:$JoinedTSFiles" -bsf:a aac_adtstoasc -c copy $DumpDirectoryExceptions\$FileName.mp4)}
-            elseif ($ShowAirDateExceptionsList -match $ShowName) {(& $FFMPEGBinary -y -i "concat:$JoinedTSFiles" -bsf:a aac_adtstoasc -c copy $DumpDirectoryTV\$FileNameAirDate.mp4)}
             else {(& $FFMPEGBinary -y -i "concat:$JoinedTSFiles" -bsf:a aac_adtstoasc -c copy $DumpDirectoryTV\$FileName.mp4)}
         }
 
         #FFMPEG for Movies
         if ($MediaType -eq 'MOVIE') {
+            #Check if the file we are going to create already exists and if so append a timestamp
+            Check-ForDuplicateFile $DumpDirectoryTV $FileName
+
             #Join .TS Clips into a Master Media File for saving
             (& $FFMPEGBinary -y -i "concat:$JoinedTSFiles" -bsf:a aac_adtstoasc -c copy $DumpDirectoryMovies\$FileName.mp4)
         }
@@ -172,4 +188,6 @@ foreach ($Recording in $Recordings) {
     Remove-Variable NoMetaData -ErrorAction SilentlyContinue
     Remove-Variable ShowException -ErrorAction SilentlyContinue
     Remove-Variable MediaType -ErrorAction SilentlyContinue
-    }
+    Remove-Variable FileName -ErrorAction SilentlyContinue
+    Remove-Variable FileNameAirDate -ErrorAction SilentlyContinue
+}
