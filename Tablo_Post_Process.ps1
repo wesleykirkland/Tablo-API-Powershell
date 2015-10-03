@@ -170,10 +170,10 @@ foreach ($Recording in $Recordings) {
         #FFMPEG for Movies
         if ($MediaType -eq 'MOVIE') {
             #Check if the file we are going to create already exists and if so append a timestamp
-            Check-ForDuplicateFile $DumpDirectoryTV $FileName
+            Check-ForDuplicateFile $DumpDirectoryMovies $FileName
 
             #Join .TS Clips into a Master Media File for saving
-            (& $FFMPEGBinary -y -i "concat:$JoinedTSFiles" -bsf:a aac_adtstoasc -c copy $DumpDirectoryMovies\$FileName.mp4)
+            (& $FFMPEGBinary -i "concat:$JoinedTSFiles" -bsf:a aac_adtstoasc -c copy $DumpDirectoryMovies\$FileName.mp4)
         }
 
         #CD to Root Directory, and remove Temp Files
