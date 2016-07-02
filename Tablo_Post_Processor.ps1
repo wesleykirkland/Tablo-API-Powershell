@@ -1,21 +1,16 @@
 ﻿#Global Variables
 $Tablo = "tablo.lan.local"
 $TempDownload = "D:\Tablo"
-$TabloDatabase = ($TempDownload + "\TabloDatabase.csv")
 $TabloRecordingURI = ("http://"+$Tablo+":18080/plex/rec_ids")
 $TabloPVRURI = ("http://"+$Tablo+":18080/pvr/")
 $FFMPEGBinary = "C:\ffmpeg\bin\ffmpeg.exe"
 $DumpDirectoryTV = "D:\Tablo\Processed_TV"
 $DumpDirectoryMovies = "D:\Tablo\Processed_Movies"
+$DumpDirectoryExceptions = "\\fsp01\torrent\Downloaded Torrents" #File path for $ShowExceptionsList
+
 #SQL Variables
 $ServerInstance = "SQLPDB01"
 $Database = "Tablo"
-
-#Exceptions Variables
-$DumpDirectoryExceptions = "\\fsp01\torrent\Downloaded Torrents" #File path for $ShowExceptionsList
-
-#Recordings Paths
-$Recordings = (Invoke-WebRequest -Uri $TabloRecordingURI -ErrorAction Stop).content | ConvertFrom-Json | Select-Object -ExpandProperty ids
 
 #Functions
 #Test SQL Server Connection
@@ -165,24 +160,28 @@ Function AddToSickRage ($ShowName) {
 }
 
 ##########################################################################################################################################################################################################################################################################################################################
-#Start of the actual script
+Write-Verbose "Pinging the Tablo and checking for directories"
+if (!(Test-Connection -ComputerName $Tablo -Count 1)) {Write-Warning "Unable to ping the tablo, please investigate this"; exit}
+if (!(Test-Path -Path $FFMPEGBinary)) {Write-Warning "Unable to locate FFMPEG Binary, please correct the path"; exit}
+if (!(Test-Path -Path $TempDownload)) {New-Item -Path $TempDownload -ItemType dir}
+if (!(Test-Path -Path $DumpDirectoryTV)) {New-Item -Path $DumpDirectoryTV -ItemType dir}
+if (!(Test-Path -Path $DumpDirectoryMovies)) {New-Item -Path $DumpDirectoryMovies -ItemType dir}
 
-#Create Temp Folders if it does not exist
-if (!(Test-Path -Path $TempDownload)) {New-Item -Path $TempDownload -ItemType dir -Force}
-if (!(Test-Path -Path $DumpDirectoryTV)) {New-Item -Path $DumpDirectoryTV -ItemType dir -Force}
+Write-Verbose "Query the Tablo for a list of IDs to process"
+$TabloRecordings = (Invoke-RestMethod -Uri $TabloRecordingURI -Method Get -ErrorAction Stop).ids
 
-#Set Location to working directory
+Write-Verbose "Setting the location to a working directory"
 Set-Location $TempDownload
 
-#Test for SQL Server Connection
+Write-Verbose "Test SQL connection and exit if it fails"
 Test-SQLConnection $ServerInstance
 
-#Check for Exceptions
+Write-Verbose "Checking for exceptions in SQL, these will be used in the post processing method"
 $ShowAirDateExceptionsList = Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query "select * from [dbo].[Air_Date_Exceptions]"  | Select-Object -ExpandProperty AirDateException
 $ShowExceptionsList = Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query "select * from [dbo].[Post_Processing_Exceptions]" | Select-Object -ExpandProperty PostProcessException
 
 #Build Foreach Loop to build folders and to download the raw TS files
-foreach ($Recording in $Recordings) {
+foreach ($Recording in $TabloRecordings) {
 
     #Build Metdata from $Recording and Grab JSON Data from Tablo, Will grab the required data as the TV and Movie functions are buried inside of Get-TabloMovieorTV
     Get-TabloMovieorTV $Recording
