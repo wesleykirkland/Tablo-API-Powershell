@@ -57,80 +57,52 @@ Function Run-SQLQuery {
     $DataSet.Tables[0]
 }
 
-#Function to Find TV Metadata
-Function Get-TabloMetaDataTV ($Recording) {
-    #Build URL to Download Metadata JSON
+#Function to get metadata associated with a recording
+Function Get-TabloRecordingMetaData ($Recording) {
     $MetadataURI = $TabloPVRURI + $Recording + "/meta.txt"
-    $JSONMetaData = (Invoke-WebRequest -Uri $MetadataURI -ErrorAction SilentlyContinue).content | ConvertFrom-Json
+    $JSONMetaData = Invoke-RestMethod -Uri $MetadataURI -Method Get -ErrorAction Stop 
 
-    #Check if Metadata is Present
+    Write-Verbose "Check if metadata is present"
     if ($? -eq $false) {$false | Set-Variable NoMetaData -Scope Script}
 
-    #Build Variables and Episode Data for later Processes
-    $JSONEpisode = ($JSONMetaData.recepisode | Select-Object -ExpandProperty jsonForClient)
-    $JSONMetaData.recSeries.jsonForClient.title | Set-Variable ShowName -Scope Script #Get Show Title
-    $JSONMetaData.recepisode.jsonForClient.description | Set-Variable EpisodeDescription -Scope Script #Get Episode Description
-    $JSONMetaData.recepisode.jsonForClient.originalAirDate | Set-Variable EpisodeOriginalAirDate -Scope Script #Get Air Date
-    $JSONMetaData.recepisode.jsonForClient.title | Set-Variable EpisodeName -Scope Script #Get Episode Title
-    $JSONEpisode.seasonNumber | Set-Variable EpisodeSeason -Scope Script #Get Episode Season
-    $JSONEpisode.episodenumber | Set-Variable EpisodeNumber -Scope Script #Get Episode Number
+    Write-Verbose "Check to see if we are processing a Movie or a TV Show"
+    if ($JSONMetaData.recEpisode) {
+        Write-Verbose "A TV Show was detected"
+        #Build Variables and Episode Data for later Processes
+        $JSONEpisode = ($JSONMetaData.recepisode | Select-Object -ExpandProperty jsonForClient)
+        $JSONMetaData.recSeries.jsonForClient.title | Set-Variable ShowName -Scope Script #Get Show Title
+        $JSONMetaData.recepisode.jsonForClient.description | Set-Variable EpisodeDescription -Scope Script #Get Episode Description
+        $JSONMetaData.recepisode.jsonForClient.originalAirDate | Set-Variable EpisodeOriginalAirDate -Scope Script #Get Air Date
+        $JSONMetaData.recepisode.jsonForClient.title | Set-Variable EpisodeName -Scope Script #Get Episode Title
+        $JSONEpisode.seasonNumber | Set-Variable EpisodeSeason -Scope Script #Get Episode Season
+        $JSONEpisode.episodenumber | Set-Variable EpisodeNumber -Scope Script #Get Episode Number
 
-    #Check for Finished Recordings
-    $JSONMetaData.recepisode.jsonForClient.video.state | Set-Variable RecIsFinished -Scope Script #Check if Recording is finished
+        $JSONMetaData.recepisode.jsonForClient.video.state | Set-Variable RecIsFinished -Scope Script #Check if Recording is finished
 
-    #Special Magic as some Characters Piss off FFMPEG, Create File Name
-    $FileName = $ShowName + "-S" +$EpisodeSeason + "E" + $EpisodeNumber
-    [string]$FileName.Replace(":","") | Set-Variable FileName -Scope Script
+        #Character Replacement as some Characters Piss off FFMPEG, Create File Name
+        $FileName = $ShowName + "-S" +$EpisodeSeason + "E" + $EpisodeNumber
+        [string]$FileName.Replace(":","") | Set-Variable FileName -Scope Script
 
-    #Special Magic as some Characters Piss off FFMPEG, Create File Name as AirDate
-    $JSONEpisode = ($JSONMetaData.recepisode | Select-Object -ExpandProperty jsonForClient)
-    $ModifiedAirDate = ($EpisodeOriginalAirDate).Split("-")
-    $ModifiedAirDate = $ModifiedAirDate[1] + '.' + $ModifiedAirDate[2] + '.' + $ModifiedAirDate[0]
-    $FileName = $ShowName + " " + $ModifiedAirDate
-    [string]$FileName.Replace(":","").Replace("-",".") | Set-Variable FileNameAirDate -Scope Script
-}
+        #Character Replacement as some Characters Piss off FFMPEG, Create File Name as AirDate
+        $JSONEpisode = ($JSONMetaData.recepisode | Select-Object -ExpandProperty jsonForClient)
+        $ModifiedAirDate = ($EpisodeOriginalAirDate).Split("-")
+        $ModifiedAirDate = $ModifiedAirDate[1] + '.' + $ModifiedAirDate[2] + '.' + $ModifiedAirDate[0]
+        $FileName = $ShowName + " " + $ModifiedAirDate
+        [string]$FileName.Replace(":","").Replace("-",".") | Set-Variable FileNameAirDate -Scope Script
 
-#Function to Find Movie Metadata
-Function Get-TabloMetaDataMovie ($Recording) {
-    #Build URL to Download Metadata JSON
-    $MetadataURI = $TabloPVRURI + $Recording + "/meta.txt"
-    $JSONMetaData = (Invoke-WebRequest -Uri $MetadataURI -ErrorAction SilentlyContinue).content | ConvertFrom-Json
+        'TV' | Set-Variable MediaType -Scope Script #Set the Media Type to a TV Show
+    } elseif ($JSONMetaData.recMovie) {
+        Write-Verbose "A Movie was detected"
+        $JSONMetaData.recMovieAiring.jsonForClient.video.state | Set-Variable RecIsFinished -Scope Script #Check if Recording is finished
+        $JSONMetaData.recMovieAiring.jsonFromTribune.program.releaseYear | Set-Variable ReleaseYear -Scope Script #Get Release Year
+        $JSONMetaData.recMovieAiring.jsonFromTribune.program.title | Set-Variable MovieName -Scope Script #Get Episode Title
+        
+        Write-Verbose "Character replacement as some Characters Piss off FFMPEG, Creating the File Name"
+        $JSONEpisode = ($JSONMetaData.recepisode | Select-Object -ExpandProperty jsonForClient)
+        $FileName = $MovieName + " (" +$ReleaseYear + ")"
+        [string]$FileName.Replace(":","") | Set-Variable FileName -Scope Script
 
-    #Check if Metadata is Present
-    if ($? -eq $false) {$false | Set-Variable NoMetaData -Scope Script}
-
-    #Build HashTable and Episode Data for later Processes
-    $JSONMetaData.recMovieAiring.jsonFromTribune.program.releaseYear | Set-Variable ReleaseYear -Scope Script #Get Release Year
-    $JSONMetaData.recMovieAiring.jsonFromTribune.program.title | Set-Variable MovieName -Scope Script #Get Episode Title
-
-    #Check for Finished Recordings
-    $JSONMetaData.recMovieAiring.jsonForClient.video.state | Set-Variable RecIsFinished -Scope Script #Check if Recording is finished
-
-    #Special Magic as some Characters Piss off FFMPEG, Create File Name
-    $JSONEpisode = ($JSONMetaData.recepisode | Select-Object -ExpandProperty jsonForClient)
-    $FileName = $MovieName + " (" +$ReleaseYear + ")"
-    [string]$FileName.Replace(":","") | Set-Variable FileName -Scope Script
-}
-
-#Function to check if we are processing a Movie or a TV Show
-Function Get-TabloMovieorTV ($Recording) {
-    #Check if we are processing a movie or a TV Show
-    $MetadataURI = $TabloPVRURI + $Recording + "/meta.txt"
-    $JSONMetaData = (Invoke-WebRequest -Uri $MetadataURI -ErrorAction SilentlyContinue).content | ConvertFrom-Json
-
-    #Check if Metadata is Present
-    if ($? -eq $false) {$false | Set-Variable NoMetaData -Scope Script}
-
-    #What to do if we are processing a Movie
-    if ($JSONMetaData.recMovie) {
-        Get-TabloMetaDataMovie $Recording
-        'MOVIE' | Set-Variable MediaType -Scope Script
-    }
-
-    #What to do if we are processing a TV Show
-    if ($JSONMetaData.recepisode) {
-        Get-TabloMetaDataTV $Recording
-        'TV' | Set-Variable MediaType -Scope Script
+        'MOVIE' | Set-Variable MediaType -Scope Script #Set the Media Type to a Movie
     }
 }
 
@@ -184,7 +156,7 @@ $ShowExceptionsList = Run-SQLQuery -ServerInstance $ServerInstance -Database $Da
 foreach ($Recording in $TabloRecordings) {
 
     #Build Metdata from $Recording and Grab JSON Data from Tablo, Will grab the required data as the TV and Movie functions are buried inside of Get-TabloMovieorTV
-    Get-TabloMovieorTV $Recording
+    Get-TabloRecordingMetaData $Recording
 
     #Check if we downloaded the show before
     if (
