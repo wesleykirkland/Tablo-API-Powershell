@@ -7,6 +7,9 @@ $FFMPEGBinary = "C:\ffmpeg\bin\ffmpeg.exe"
 $DumpDirectoryTV = "D:\Tablo\Processed_TV"
 $DumpDirectoryMovies = "D:\Tablo\Processed_Movies"
 $DumpDirectoryExceptions = "\\fsp01\torrent\Downloaded Torrents" #File path for $ShowExceptionsList
+$SickRageAPIKey = '24905c2fef38de5a7d91003db024e2f0'
+$SickRageURL = 'https://torrent:8081' #No Trailing '/'
+$EnableSickRageSupport = $true
 
 #SQL Variables
 $ServerInstance = "SQLPDB01"
@@ -112,10 +115,7 @@ Function Check-ForDuplicateFile ($Directory,$FileName) {
 }
 
 #Function to auto add new shows to SickRage
-Function AddToSickRage ($ShowName) {
-    $SickRageURL = 'https://torrent:8081' #No Trailing '/'
-    $SickRageAPIKey = '24905c2fef38de5a7d91003db024e2f0'
-     
+Function AddToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
     #Find the TVDB ID
     $TVDBResults = Invoke-RestMethod -Method Get -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=sb.searchtvdb&name=$ShowName"
  
@@ -165,61 +165,58 @@ foreach ($Recording in $TabloRecordings) {
      -and ($RecIsFinished -eq 'finished')`
      -and ($NoMetaData -notmatch $false)) {
 
-        #Set File name depending on Exceptions List, this needs to go up top to correctly store Air Date Exceptions in SQL
+        Write-Verbose "Set File name depending on Exceptions List, this needs to go up top to correctly store Air Date Exceptions in SQL"
         if ($ShowAirDateExceptionsList -match $ShowName) {$FileName = $FileNameAirDate} #Else we will use the the $FileName defined in the metadata function(s)
 
         #Build Entry to Put into Tablo Database
-        $DatabaseEntry = @{} | Select-Object FileName,EpisodeName,Show,AirDate,PostProcessDate,Description,RecID,Media,EpisodeSeason,EpisodeNumber
-        $DatabaseEntry.FileName = $FileName -replace "'","''"
-        $DatabaseEntry.EpisodeName = $EpisodeName -replace "'","''"
-        $DatabaseEntry.Show = $ShowName -replace "'","''"
-        $DatabaseEntry.AirDate = $EpisodeOriginalAirDate
-        $DatabaseEntry.PostProcessDate = (Get-Date)
-        $DatabaseEntry.Description = $EpisodeDescription -replace "'","''"
-        $DatabaseEntry.RecID = $Recording
-        $DatabaseEntry.Media = $MediaType
-        $DatabaseEntry.EpisodeSeason = $EpisodeSeason
-        $DatabaseEntry.EpisodeNumber = $EpisodeNumber
+        $DatabaseEntry = New-Object PSObject -Property @{
+            FileName = $FileName -replace "'","''"
+            EpisodeName = $EpisodeName -replace "'","''"
+            Show = $ShowName -replace "'","''"
+            AirDate = $EpisodeOriginalAirDate
+            PostProcessDate = (Get-Date)
+            Description = $EpisodeDescription -replace "'","''"
+            RecID = $Recording
+            Media = $MediaType
+            EpisodeSeason = $EpisodeSeason
+            EpisodeNumber = $EpisodeNumber
+        }
 
-        #Build INSERT Query String
+        Write-Verbose "Build SQL Query to insert the DataBase Entry into the Database"
         if ($MediaType -eq 'TV') {
             #Check if the show exists in the Shows table if not add it to [TV_Shows]
             if (!(Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query "SELECT SHOW FROM [dbo].[TV_Shows] WHERE SHOW = '$($DatabaseEntry.show)'").Show -eq $DatabaseEntry.Show) {
                 #Update SQL with New Show
                 Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query "INSERT INTO [dbo].[TV_Shows] (Show) VALUES ('$($DatabaseEntry.Show)')"
 
-                #Add show to SickRage
-                AddToSickRage -ShowName $DatabaseEntry.Show
+                Write-Verbose "Adding New Show to SickRage if SickRage Support is enabled"
+                if ($EnableSickRageSupport) {AddToSickRage -ShowName $DatabaseEntry.Show}
             }
 
-            #Build SQL Insert to insert the entry into SQL [TV_Recordings]
-            $SQLInsert = "INSERT INTO [dbo].[TV_Recordings] (RecID,FileName,EpisodeName,Show,EpisodeNumber,EpisodeSeason,AirDate,PostProcessDate,Description,Media) VALUES('{0}','{1}','{2}','{3}','{4}','{5}','{6}','{7}','{8}','{9}')" -f $DatabaseEntry.RecID,$DatabaseEntry.FileName,$DatabaseEntry.EpisodeName,$DatabaseEntry.Show,$DatabaseEntry.EpisodeNumber,$DatabaseEntry.EpisodeSeason,$DatabaseEntry.AirDate,$DatabaseEntry.PostProcessDate,$DatabaseEntry.Description,$DatabaseEntry.Media
+            Write-Verbose "Build SQL Insert to insert the entry into SQL [TV_Recordings]"
+            $SQLInsert = "INSERT INTO [dbo].[TV_Recordings] (RecID,FileName,EpisodeName,Show,EpisodeNumber,EpisodeSeason,AirDate,PostProcessDate,Description,Media) VALUES ('{0}','{1}','{2}','{3}','{4}','{5}','{6}','{7}','{8}','{9}')" -f $DatabaseEntry.RecID,$DatabaseEntry.FileName,$DatabaseEntry.EpisodeName,$DatabaseEntry.Show,$DatabaseEntry.EpisodeNumber,$DatabaseEntry.EpisodeSeason,$DatabaseEntry.AirDate,$DatabaseEntry.PostProcessDate,$DatabaseEntry.Description,$DatabaseEntry.Media
         } elseif ($MediaType -eq 'MOVIE') {
-            $SQLInsert = "INSERT INTO [dbo].[MOVIE_Recordings] (RecID,FileName,AirDate,PostProcessDate,Media,Processed) VALUES('{0}','{1}','{2}','{3}','{4}','')" -f $DatabaseEntry.RecID,$DatabaseEntry.FileName,$DatabaseEntry.AirDate,$DatabaseEntry.PostProcessDate,$DatabaseEntry.Media
+            $SQLInsert = "INSERT INTO [dbo].[MOVIE_Recordings] (RecID,FileName,AirDate,PostProcessDate,Media,Processed) VALUES ('{0}','{1}','{2}','{3}','{4}','')" -f $DatabaseEntry.RecID,$DatabaseEntry.FileName,$DatabaseEntry.AirDate,$DatabaseEntry.PostProcessDate,$DatabaseEntry.Media
             }
-
-
-        #Insert into SQL
         Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query $SQLInsert
 
-        #Build Variables to Download TS recorded files
+        Write-Verbose "Build Variables to Download TS recorded files"
         $RecordingURI = ($TabloPVRURI + $Recording + "/segs/")
-        $RecordedLinks = ((Invoke-WebRequest -Uri $RecordingURI).links | select -Skip 1).href
+        $RecordedLinks = ((Invoke-WebRequest -Uri $RecordingURI).links | Where-Object {($_.href -match '[0-9]')}).href
 
-        #Create Temp Folder
+        Write-Verbose "Create a temporary folder to store the recording files"
         if (!(Test-Path ($Recording))) {New-Item ($Recording) -ItemType dir}
 
         #CD to Download Directory
         Set-Location $Recording
 
-        foreach ($Link in $RecordedLinks) {#
-            Invoke-WebRequest -URI ($RecordingURI + $Link) -OutFile $Link
-            }
+        Write-Verbose "Download all the clips from the Tablo, so we can join them together later"
+        foreach ($Link in $RecordedLinks) {Invoke-WebRequest -URI ($RecordingURI + $Link) -OutFile $Link}
 
         #Create String for FFMPEG
         $JoinedTSFiles = ((Get-ChildItem).Name) -join '|'
 
-        #FFMPEG for TV Shows
+        Write-Verbose "Run FFMpeg for TV Shows or Movies"
         if ($MediaType -eq 'TV') {
             #Check if the file we are going to create already exists and if so append a timestamp
             Check-ForDuplicateFile $DumpDirectoryTV $FileName
@@ -227,10 +224,7 @@ foreach ($Recording in $TabloRecordings) {
             #Join .TS Clips into a Master Media File for saving
             if ($ShowExceptionsList -match $ShowName) {(& $FFMPEGBinary -y -i "concat:$JoinedTSFiles" -bsf:a aac_adtstoasc -c copy $DumpDirectoryExceptions\$FileName.mp4)}
             else {(& $FFMPEGBinary -y -i "concat:$JoinedTSFiles" -bsf:a aac_adtstoasc -c copy $DumpDirectoryTV\$FileName.mp4)}
-        }
-
-        #FFMPEG for Movies
-        if ($MediaType -eq 'MOVIE') {
+        } elseif ($MediaType -eq 'MOVIE') {
             #Check if the file we are going to create already exists and if so append a timestamp
             Check-ForDuplicateFile $DumpDirectoryMovies $FileName
 
@@ -238,22 +232,23 @@ foreach ($Recording in $TabloRecordings) {
             (& $FFMPEGBinary -y -i "concat:$JoinedTSFiles" -bsf:a aac_adtstoasc -c copy $DumpDirectoryMovies\$FileName.mp4)
         }
 
-        #CD to Root Directory, and remove Temp Files
+        Write-Verbose "CD to Root Directory, and remove Temp Files"
         Set-Location $TempDownload
         Remove-Item $Recording -Recurse
 
-        #Update SQL with recording as processed
-        #Build Processed Query String
+        Write-Verbose "Update SQL with recording as processed"
         if ($MediaType -eq 'TV') {
-            $SQLInsert = "Update [dbo].[TV_Recordings] SET Processed=1 where Recid=$Recording"
+            $SQLInsert = "UPDATE [dbo].[TV_Recordings] SET Processed=1 WHERE Recid=$Recording"
         } elseif ($MediaType -eq 'MOVIE') {
-            $SQLInsert = "Update [dbo].[MOVIE_Recordings] SET Processed=1 where Recid=$Recording"
-            }
+            $SQLInsert = "UPDATE [dbo].[MOVIE_Recordings] SET Processed=1 WHERE Recid=$Recording"
+        }
         Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query $SQLInsert
+        } else {
+            if ($NoMetaData -eq $false) {Write-Output "$Recording does not have any metadata, skipping"
+        } else {Write-Output "$Recording has already been downloaded"}
+    }
 
-        } else {if ($NoMetaData -eq $false) {Write-Output "$Recording does not have any metadata, skipping"} else {Write-Output "$Recording has already been downloaded"}}
-
-    #Clear Varibles that can cause issues, outside of the If statement so the variables are removed every time
+    #Clear Varibles that can cause issues, outside of the if statement so the variables are removed every time
     Remove-Variable RecIsFinished -ErrorAction SilentlyContinue
     Remove-Variable DatabaseEntry -ErrorAction SilentlyContinue
     Remove-Variable NoMetaData -ErrorAction SilentlyContinue
