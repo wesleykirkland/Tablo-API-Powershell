@@ -131,6 +131,19 @@ Function AddToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
     }
 }
 
+#Function to recheck the episodes recording status
+Function Get-TabloRecordingStatus ($Recording) {
+    $MetadataURI = $TabloPVRURI + $Recording + "/meta.txt"
+    $JSONMetaData = Invoke-RestMethod -Uri $MetadataURI -Method Get -ErrorAction Stop 
+
+    Write-Verbose "Check if metadata is present"
+    if ($? -eq $false) {$false | Set-Variable NoMetaData -Scope Script}
+
+    Write-Verbose "Check to see if we are processing a Movie or a TV Show, and then set the RecIsFinished variable"
+    if ($JSONMetaData.recEpisode) {$JSONMetaData.recepisode.jsonForClient.video.state | Set-Variable RecIsFinished -Scope Script}
+    elseif ($JSONMetaData.recMovie) {$JSONMetaData.recMovieAiring.jsonForClient.video.state | Set-Variable RecIsFinished -Scope Script}
+}
+
 ##########################################################################################################################################################################################################################################################################################################################
 Write-Verbose "Pinging the Tablo and checking for directories"
 if (!(Test-Connection -ComputerName $Tablo -Count 1)) {Write-Warning "Unable to ping the tablo, please investigate this"; exit}
