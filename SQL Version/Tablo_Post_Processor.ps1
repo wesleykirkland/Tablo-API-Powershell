@@ -203,7 +203,7 @@ foreach ($Recording in $TabloRecordings) {
                 Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query "INSERT INTO [dbo].[TV_Shows] (Show) VALUES ('$($DatabaseEntry.Show)')"
 
                 Write-Verbose "Adding New Show to SickRage if SickRage Support is enabled"
-                if ($EnableSickRageSupport) {Add-ToSickRage -ShowName $DatabaseEntry.Show}
+                if ($EnableSickRageSupport) {Add-ToSickRage -ShowName $DatabaseEntry.Show -SickRageAPIKey $SickRageAPIKey -SickRageURL $SickRageURL}
             }
 
             Write-Verbose "Build SQL Insert to insert the entry into SQL [TV_Recordings]"
