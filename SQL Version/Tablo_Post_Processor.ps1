@@ -115,7 +115,7 @@ Function Check-ForDuplicateFile ($Directory,$FileName) {
 }
 
 #Function to auto add new shows to SickRage
-Function AddToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
+Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
     #Find the TVDB ID
     $TVDBResults = Invoke-RestMethod -Method Get -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=sb.searchtvdb&name=$ShowName"
  
@@ -175,7 +175,7 @@ foreach ($Recording in $TabloRecordings) {
     if (
     ((Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query "SELECT RecID from TV_Recordings where RECID=$Recording") -eq $null)`
      -and ((Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query "SELECT RecID from MOVIE_Recordings where RECID=$Recording") -eq $null)`
-     -and ($RecIsFinished -eq 'finished')`
+     -and ($RecIsFinished -match "finished|recording")`
      -and ($NoMetaData -notmatch $false)) {
 
         Write-Verbose "Set File name depending on Exceptions List, this needs to go up top to correctly store Air Date Exceptions in SQL"
@@ -203,7 +203,7 @@ foreach ($Recording in $TabloRecordings) {
                 Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query "INSERT INTO [dbo].[TV_Shows] (Show) VALUES ('$($DatabaseEntry.Show)')"
 
                 Write-Verbose "Adding New Show to SickRage if SickRage Support is enabled"
-                if ($EnableSickRageSupport) {AddToSickRage -ShowName $DatabaseEntry.Show}
+                if ($EnableSickRageSupport) {Add-ToSickRage -ShowName $DatabaseEntry.Show}
             }
 
             Write-Verbose "Build SQL Insert to insert the entry into SQL [TV_Recordings]"
@@ -223,8 +223,21 @@ foreach ($Recording in $TabloRecordings) {
         #CD to Download Directory
         Set-Location $Recording
 
-        Write-Verbose "Download all the clips from the Tablo, so we can join them together later"
-        foreach ($Link in $RecordedLinks) {Invoke-WebRequest -URI ($RecordingURI + $Link) -OutFile $Link}
+        if ($RecIsFinished -eq 'recording') {
+            Write-Verbose "Recording in progress, do until loop to download all the clips from the Tablo, so we can join them together later"
+            do {
+                $RecordedLinks = ((Invoke-WebRequest -Uri $RecordingURI).links | Where-Object {($_.href -match '[0-9]')}).href
+                foreach ($Link in $RecordedLinks) {
+                    if (!(Test-Path -Path $Link)) {Invoke-WebRequest -URI ($RecordingURI + $Link) -OutFile $Link}
+                }
+                Get-TabloRecordingStatus -Recording $Recording
+                [System.GC]::Collect() #.Net method to clean up the ram
+                Start-Sleep -Seconds 5 #Sleep for a little to prevent slamming the tablo
+            } until ($RecIsFinished -eq 'finished')
+        } elseif ($RecIsFinished -eq 'finished') {
+             Write-Verbose "Recording is Finsihed, downloading all the clips from the Tablo, so we can join them together later"
+            foreach ($Link in $RecordedLinks) {Invoke-WebRequest -URI ($RecordingURI + $Link) -OutFile $Link}
+        }
 
         #Create String for FFMPEG
         $JoinedTSFiles = ((Get-ChildItem).Name) -join '|'
@@ -277,4 +290,6 @@ foreach ($Recording in $TabloRecordings) {
     Remove-Variable ShowName -ErrorAction SilentlyContinue
     Remove-Variable EpisodeSeason -ErrorAction SilentlyContinue
     Remove-Variable EpisodeNumber -ErrorAction SilentlyContinue
+
+    [System.GC]::Collect() #.Net method to clean up the ram
 }
