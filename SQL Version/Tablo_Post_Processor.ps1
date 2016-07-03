@@ -6,9 +6,9 @@ $TabloPVRURI = ("http://"+$Tablo+":18080/pvr/")
 $FFMPEGBinary = "C:\ffmpeg\bin\ffmpeg.exe"
 $DumpDirectoryTV = "D:\Tablo\Processed_TV"
 $DumpDirectoryMovies = "D:\Tablo\Processed_Movies"
-$DumpDirectoryExceptions = "\\fsp01\torrent\Downloaded Torrents" #File path for $ShowExceptionsList
-$SickRageAPIKey = '24905c2fef38de5a7d91003db024e2f0'
-$SickRageURL = 'https://torrent:8081' #No Trailing '/'
+$DumpDirectoryExceptions = "\\fileserver\torrent\Downloaded Torrents" #File path for $ShowExceptionsList
+$SickRageAPIKey = 'apikey'
+$SickRageURL = 'https://SickRageorSickBeard:8081' #No Trailing '/'
 $EnableSickRageSupport = $true
 
 #SQL Variables
