@@ -127,7 +127,7 @@ Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
         #Add the show to SickRage
         Invoke-WebRequest -Method Get -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=show.addnew&future_status=skipped&lang=en&tvdbid=$($TVDBObject.tvdbid)"
         
-        Send-MailMessage -To 'alerts@wesleyk.me' -From ($env:COMPUTERNAME + "@relay.lan.local") -Subject "New Show '$($TVDBObject.name)' Auto added to SickRage" -SmtpServer relay.lan.local
+        Send-MailMessage -To 'to@email.com' -From ($env:COMPUTERNAME + "@domain.tld") -Subject "New Show '$($TVDBObject.name)' Auto added to SickRage" -SmtpServer relay.lan.local
     }
 }
 
