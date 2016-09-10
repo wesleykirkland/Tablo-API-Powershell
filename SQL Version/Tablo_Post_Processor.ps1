@@ -169,7 +169,7 @@ $ShowExceptionsList = Run-SQLQuery -ServerInstance $ServerInstance -Database $Da
 foreach ($Recording in $TabloRecordings) {
 
     #Build Metdata from $Recording and Grab JSON Data from Tablo, Will grab the required data as the TV and Movie functions are buried inside of Get-TabloMovieorTV
-    Get-TabloRecordingMetaData $Recording
+    Try {Get-TabloRecordingMetaData $Recording} Catch {Write-Warning "There was an API error on the Tablo, please investigate this."; exit}
 
     #SQL Select statement since we will run multiple if statements against it
     $TVSQLSelect = Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query "SELECT Recid,Processed FROM TV_Recordings where RECID=$Recording"
@@ -198,23 +198,29 @@ foreach ($Recording in $TabloRecordings) {
             EpisodeNumber = $EpisodeNumber
         }
 
-        Write-Verbose "Build SQL Query to insert the DataBase Entry into the Database"
-        if ($MediaType -eq 'TV') {
-            #Check if the show exists in the Shows table if not add it to [TV_Shows]
-            if (!(Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query "SELECT SHOW FROM [dbo].[TV_Shows] WHERE SHOW = '$($DatabaseEntry.show)'").Show -eq $DatabaseEntry.Show) {
-                #Update SQL with New Show
-                Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query "INSERT INTO [dbo].[TV_Shows] (Show) VALUES ('$($DatabaseEntry.Show)')"
+        #Check if we are processing a failed download, if not insert everything into SQL
+        if (!(($TVSQLSelect.Recid -notlike $null) -and ($TVSQLSelect.Processed -like $null))) {
+            Write-Verbose "Build SQL Query to insert the DataBase Entry into the Database"
+            if ($MediaType -eq 'TV') {
+                #Check if the show exists in the Shows table if not add it to [TV_Shows]
+                if (!(Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query "SELECT SHOW FROM [dbo].[TV_Shows] WHERE SHOW = '$($DatabaseEntry.show)'").Show -eq $DatabaseEntry.Show) {
+                    #Update SQL with New Show
+                    Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query "INSERT INTO [dbo].[TV_Shows] (Show) VALUES ('$($DatabaseEntry.Show)')"
 
-                Write-Verbose "Adding New Show to SickRage if SickRage Support is enabled"
-                if ($EnableSickRageSupport) {Add-ToSickRage -ShowName $DatabaseEntry.Show -SickRageAPIKey $SickRageAPIKey -SickRageURL $SickRageURL}
-            }
+                    Write-Verbose "Adding New Show to SickRage if SickRage Support is enabled"
+                    if ($EnableSickRageSupport) {Add-ToSickRage -ShowName $DatabaseEntry.Show -SickRageAPIKey $SickRageAPIKey -SickRageURL $SickRageURL}
+                }
 
-            Write-Verbose "Build SQL Insert to insert the entry into SQL [TV_Recordings]"
-            $SQLInsert = "INSERT INTO [dbo].[TV_Recordings] (RecID,FileName,EpisodeName,Show,EpisodeNumber,EpisodeSeason,AirDate,PostProcessDate,Description,Media) VALUES ('{0}','{1}','{2}','{3}','{4}','{5}','{6}','{7}','{8}','{9}')" -f $DatabaseEntry.RecID,$DatabaseEntry.FileName,$DatabaseEntry.EpisodeName,$DatabaseEntry.Show,$DatabaseEntry.EpisodeNumber,$DatabaseEntry.EpisodeSeason,$DatabaseEntry.AirDate,$DatabaseEntry.PostProcessDate,$DatabaseEntry.Description,$DatabaseEntry.Media
-        } elseif ($MediaType -eq 'MOVIE') {
-            $SQLInsert = "INSERT INTO [dbo].[MOVIE_Recordings] (RecID,FileName,AirDate,PostProcessDate,Media,Processed) VALUES ('{0}','{1}','{2}','{3}','{4}','')" -f $DatabaseEntry.RecID,$DatabaseEntry.FileName,$DatabaseEntry.AirDate,$DatabaseEntry.PostProcessDate,$DatabaseEntry.Media
-            }
-        Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query $SQLInsert
+                Write-Verbose "Build SQL Insert to insert the entry into SQL [TV_Recordings]"
+                $SQLInsert = "INSERT INTO [dbo].[TV_Recordings] (RecID,FileName,EpisodeName,Show,EpisodeNumber,EpisodeSeason,AirDate,PostProcessDate,Description,Media) VALUES ('{0}','{1}','{2}','{3}','{4}','{5}','{6}','{7}','{8}','{9}')" -f $DatabaseEntry.RecID,$DatabaseEntry.FileName,$DatabaseEntry.EpisodeName,$DatabaseEntry.Show,$DatabaseEntry.EpisodeNumber,$DatabaseEntry.EpisodeSeason,$DatabaseEntry.AirDate,$DatabaseEntry.PostProcessDate,$DatabaseEntry.Description,$DatabaseEntry.Media
+            } elseif ($MediaType -eq 'MOVIE') {
+                $SQLInsert = "INSERT INTO [dbo].[MOVIE_Recordings] (RecID,FileName,AirDate,PostProcessDate,Media,Processed) VALUES ('{0}','{1}','{2}','{3}','{4}','')" -f $DatabaseEntry.RecID,$DatabaseEntry.FileName,$DatabaseEntry.AirDate,$DatabaseEntry.PostProcessDate,$DatabaseEntry.Media
+                }
+            Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query $SQLInsert
+        } else {
+            #Remove the folder and start over, we want good files and not bad files
+            Remove-Item $Recording -Recurse -Force
+        }
 
         Write-Verbose "Build Variables to Download TS recorded files"
         $RecordingURI = ($TabloPVRURI + $Recording + "/segs/")
