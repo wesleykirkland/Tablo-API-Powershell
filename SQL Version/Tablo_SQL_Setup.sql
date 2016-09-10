@@ -160,7 +160,7 @@ GO
 CREATE TABLE [dbo].[TV_Recordings](
 	[RecID] [numeric](16, 0) NOT NULL,
 	[FileName] [varchar](255) NOT NULL,
-	[EpisodeName] [varchar](100) NULL,
+	[EpisodeName] [varchar](255) NULL,
 	[Show] [varchar](100) NOT NULL,
 	[EpisodeSeason] [numeric](4, 0) NULL,
 	[EpisodeNumber] [numeric](3, 0) NULL,
