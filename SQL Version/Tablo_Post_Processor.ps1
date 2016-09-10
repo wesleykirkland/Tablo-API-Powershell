@@ -171,9 +171,12 @@ foreach ($Recording in $TabloRecordings) {
     #Build Metdata from $Recording and Grab JSON Data from Tablo, Will grab the required data as the TV and Movie functions are buried inside of Get-TabloMovieorTV
     Get-TabloRecordingMetaData $Recording
 
+    #SQL Select statement since we will run multiple if statements against it
+    $TVSQLSelect = Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query "SELECT Recid,Processed FROM TV_Recordings where RECID=$Recording"
+
     #Check if we downloaded the show before
     if (
-    ((Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query "SELECT RecID from TV_Recordings where RECID=$Recording") -eq $null)`
+    ((($TVSQLSelect | Select-Object RecID) -eq $null) -or ($TVSQLSelect.Processed -like $null))`
      -and ((Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query "SELECT RecID from MOVIE_Recordings where RECID=$Recording") -eq $null)`
      -and ($RecIsFinished -match "finished|recording")`
      -and ($NoMetaData -notmatch $false)) {
