@@ -1,5 +1,5 @@
 ﻿#Global Variables
-$Tablo = "tablo.lan.local"
+$Tablo = "tablo.domain.tld"
 $TempDownload = "D:\Tablo"
 $TabloRecordingURI = ("http://"+$Tablo+":18080/plex/rec_ids")
 $TabloPVRURI = ("http://"+$Tablo+":18080/pvr/")
@@ -10,6 +10,11 @@ $DumpDirectoryExceptions = "\\fileserver\torrent\Downloaded Torrents" #File path
 $SickRageAPIKey = 'apikey'
 $SickRageURL = 'https://SickRageorSickBeard:8081' #No Trailing '/'
 $EnableSickRageSupport = $true
+$EnableSickRageSupport = $true
+$EmailTo = 'person@domain.tld'
+$EmailFrom = ($env:COMPUTERNAME + "@domain.tld")
+$EmailSMTP = 'smtp.domain.tld'
+
 
 #SQL Variables
 $ServerInstance = "SQLPDB01"
@@ -62,11 +67,13 @@ Function Run-SQLQuery {
 
 #Function to get metadata associated with a recording
 Function Get-TabloRecordingMetaData ($Recording) {
-    $MetadataURI = $TabloPVRURI + $Recording + "/meta.txt"
-    $JSONMetaData = Invoke-RestMethod -Uri $MetadataURI -Method Get -ErrorAction Stop 
+    Try {
+        $MetadataURI = $TabloPVRURI + $Recording + "/meta.txt"
+        $JSONMetaData = Invoke-RestMethod -Uri $MetadataURI -Method Get -ErrorAction Stop 
 
-    Write-Verbose "Check if metadata is present"
-    if ($? -eq $false) {$false | Set-Variable NoMetaData -Scope Script}
+        Write-Verbose "Check if metadata is present"
+        if ($? -eq $false) {$false | Set-Variable NoMetaData -Scope Script}
+    } Catch {$false | Set-Variable NoMetaData -Scope Script} #Force set no metadata so we don't error out later if our API call failed
 
     Write-Verbose "Check to see if we are processing a Movie or a TV Show"
     if ($JSONMetaData.recEpisode) {
@@ -117,7 +124,9 @@ Function Check-ForDuplicateFile ($Directory,$FileName) {
 #Function to auto add new shows to SickRage
 Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
     #Find the TVDB ID
-    $TVDBResults = Invoke-RestMethod -Method Get -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=sb.searchtvdb&name=$ShowName"
+    Try {
+        $TVDBResults = Invoke-RestMethod -Method Get -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=sb.searchtvdb&name=$ShowName"
+    } Catch [System.Net.WebException] {Send-MailMessage -To $EmailTo -From $EmailFrom -Subject 'An Error occured while calling the SickRage API' -SmtpServer $EmailSMTP}
  
     #Verify we successfully ran the query, and atleast 1 or more data results as well as the result is in english
     If (($TVDBResults.result -eq 'success') -and ($TVDBResults.data.results.name -ge '1') -and ($TVDBResults.data.langid -eq '7')) {
@@ -125,9 +134,9 @@ Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
         $TVDBObject = $TVDBResults.data.results | Sort-Object first_aired -Descending | Select-Object -First 1
  
         #Add the show to SickRage
-        Invoke-WebRequest -Method Get -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=show.addnew&future_status=skipped&lang=en&tvdbid=$($TVDBObject.tvdbid)"
+        Invoke-RestMethod -Method Get -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=show.addnew&future_status=skipped&lang=en&tvdbid=$($TVDBObject.tvdbid)"
         
-        Send-MailMessage -To 'to@email.com' -From ($env:COMPUTERNAME + "@domain.tld") -Subject "New Show '$($TVDBObject.name)' Auto added to SickRage" -SmtpServer relay.lan.local
+        Send-MailMessage -To $EmailTo -From $EmailFrom -Subject "New Show '$($TVDBObject.name)' Auto added to SickRage" -SmtpServer $EmailSMTP
     }
 }
 
@@ -169,7 +178,7 @@ $ShowExceptionsList = Run-SQLQuery -ServerInstance $ServerInstance -Database $Da
 foreach ($Recording in $TabloRecordings) {
 
     #Build Metdata from $Recording and Grab JSON Data from Tablo, Will grab the required data as the TV and Movie functions are buried inside of Get-TabloMovieorTV
-    Try {Get-TabloRecordingMetaData $Recording} Catch {Write-Warning "There was an API error on the Tablo, please investigate this."; exit}
+Get-TabloRecordingMetaData $Recording
 
     #SQL Select statement since we will run multiple if statements against it
     $TVSQLSelect = Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query "SELECT Recid,Processed FROM TV_Recordings where RECID=$Recording"
