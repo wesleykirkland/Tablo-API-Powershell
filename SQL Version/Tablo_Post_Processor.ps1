@@ -131,8 +131,8 @@ Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
     #Verify we successfully ran the query, and atleast 1 or more data results as well as the result is in english
     If (($TVDBResults.result -eq 'success') -and ($TVDBResults.data.results.name -ge '1') -and ($TVDBResults.data.langid -eq '7')) {
         #Select the correct results based upon the most recent show
-        $TVDBObject = $TVDBResults.data.results | Sort-Object first_aired -Descending | Select-Object -First 1
- 
+        $TVDBObject = $TVDBResults.data.results | Where-Object {($PSItem.first_aired -notlike 'Unknown')} | Sort-Object first_aired -Descending | Select-Object -First 1
+
         #Add the show to SickRage
         Invoke-RestMethod -Method Get -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=show.addnew&future_status=skipped&lang=en&tvdbid=$($TVDBObject.tvdbid)"
         
