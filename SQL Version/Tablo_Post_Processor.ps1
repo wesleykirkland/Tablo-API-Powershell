@@ -14,6 +14,10 @@ $EnableSickRageSupport = $true
 $EmailTo = 'person@domain.tld'
 $EmailFrom = ($env:COMPUTERNAME + "@domain.tld")
 $EmailSMTP = 'smtp.domain.tld'
+#TVDB Variables
+$TVDBAPIKey = 'APIKEY'
+$TVDBUserKey = 'UserKey' #https://api.thetvdb.com/swagger
+$TVDBBaseURI = 'https://api.thetvdb.com' #https://api.thetvdb.com/swagger
 
 
 #SQL Variables
@@ -79,14 +83,12 @@ Function Get-TabloRecordingMetaData ($Recording) {
     if ($JSONMetaData.recEpisode) {
         Write-Verbose "A TV Show was detected"
         #Build Variables and Episode Data for later Processes
-        $JSONEpisode = ($JSONMetaData.recepisode | Select-Object -ExpandProperty jsonForClient)
         $JSONMetaData.recSeries.jsonForClient.title | Set-Variable ShowName -Scope Script #Get Show Title
         $JSONMetaData.recepisode.jsonForClient.description | Set-Variable EpisodeDescription -Scope Script #Get Episode Description
         $JSONMetaData.recepisode.jsonForClient.originalAirDate | Set-Variable EpisodeOriginalAirDate -Scope Script #Get Air Date
         $JSONMetaData.recepisode.jsonForClient.title | Set-Variable EpisodeName -Scope Script #Get Episode Title
-        $JSONEpisode.seasonNumber | Set-Variable EpisodeSeason -Scope Script #Get Episode Season
-        $JSONEpisode.episodenumber | Set-Variable EpisodeNumber -Scope Script #Get Episode Number
-
+        $JSONMetaData.recEpisode.jsonForClient.seasonNumber | Set-Variable EpisodeSeason -Scope Script #Get Episode Season
+        $JSONMetaData.recEpisode.jsonForClient.episodenumber | Set-Variable EpisodeNumber -Scope Script #Get Episode Number
         $JSONMetaData.recepisode.jsonForClient.video.state | Set-Variable RecIsFinished -Scope Script #Check if Recording is finished
 
         #Character Replacement as some Characters Piss off FFMPEG, Create File Name
@@ -121,6 +123,34 @@ Function Check-ForDuplicateFile ($Directory,$FileName) {
     if (Test-Path -Path $Directory\$FileName -ErrorAction SilentlyContinue) {$FileName + '-' + (Get-Date -Format HH:MM-yyyy-mm-dd) | Set-Variable FileName -Scope Script} #Else do nothing and leave the file name alone.
 }
 
+#Function to get Series Information from the TVDB by Series ID
+function Get-TVDBSeriesInformationByID ($ShowID, $TVDBAPIKey, $TVDBUserKey) {
+    #Build our TVDBHeaders
+    $TVDBHeaders = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+    $TVDBHeaders.Add('Accept', 'application/json')
+    $TVDBHeaders.Add('Content-Type', 'application/json')
+
+    #JSON to Authenicate to the TVDB
+    $TVDBJSONLogin = ConvertTo-Json(@{
+        apikey = $TVDBAPIKey;
+        userkey = $TVDBUserKey;
+    })
+
+    #Login to the TVDB API and get our Bearer Token
+    $TVDBToken = (Invoke-RestMethod -Method Post -Uri "$TVDBBaseURI/login" -Body $TVDBJSONLogin -Headers $TVDBHeaders).Token
+
+    #Add our OAuth Token to our Header
+    $TVDBHeaders.Add('Authorization', "Bearer $TVDBToken")
+
+    #Find the ShowName
+    (Invoke-RestMethod -Method Get -Uri "$TVDBBaseURI/series/$ShowID" -Headers $TVDBHeaders).Data
+}
+
+#Function to get information from the Open Movie Database, thank god I don't actually have to authenticate here
+function Get-OpenMovieDataBaseByID ($IMDBId) {
+    (Invoke-RestMethod -Method Get -Uri "http://www.omdbapi.com/?i=$($IMDBId)&plot=short&r=json")
+}
+
 #Function to auto add new shows to SickRage
 Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
     #Find the TVDB ID
@@ -131,11 +161,71 @@ Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
     #Verify we successfully ran the query, and atleast 1 or more data results as well as the result is in english
     If (($TVDBResults.result -eq 'success') -and ($TVDBResults.data.results.name -ge '1') -and ($TVDBResults.data.langid -eq '7')) {
         #Select the correct results based upon the most recent show
-        $TVDBObject = $TVDBResults.data.results | Where-Object {($PSItem.first_aired -notlike 'Unknown')} | Sort-Object first_aired -Descending | Select-Object -First 1
+        $TVDBObjects = $TVDBResults.data.results | Where-Object {($PSItem.first_aired -notlike 'Unknown')} | Sort-Object first_aired -Descending
 
-        #Add the show to SickRage
-        Invoke-RestMethod -Method Get -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=show.addnew&future_status=skipped&lang=en&tvdbid=$($TVDBObject.tvdbid)"
+        #If only 1 entry was returned it is useless to continue the logic so we will go with it, else we will loop through some logic
+        if ($TVDBObjects.Count -eq 1) {
+            #Add the show to SickRage
+            Write-Verbose "Added $($TVDBObjects.tvdbid) - $($TVDBObjects.Name) to SickRage as it was the only valid entry"
+            Invoke-RestMethod -Method Get -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=show.addnew&future_status=skipped&lang=en&tvdbid=$($TVDBObjects.tvdbid)"
+        } else {
+            foreach ($TVDBObject in $TVDBObjects) {
+                Write-Host "Working on $($TVDBObject.tvdbid)"
+                #Compare the dates to see if this is an accurate listing
+                $IMDBID = (Get-TVDBSeriesInformationByID -ShowID $TVDBObject.tvdbid -TVDBAPIKey $TVDBAPIKey -TVDBUserKey $TVDBUserKey).imdbid
+                $OMDBEntry = Get-OpenMovieDataBaseByID -IMDBId $IMDBID
+
+                #Check to make sure we got a valid response from IMDB/OMDB
+                if ($OMDBEntry.Response -notlike $false) {
+                    #Split the years of the IMDB/OMDB Entry
+                    $OMDBYears = $OMDBEntry.Year.Split('–') | Where-Object {($PSItem -notlike $null)}
+                    #If a show if new we can only check if the air date is newer or equal to what IMDB/OMDB tells us our series run time is, if not we will continue below
+                    if ($OMDBYears.Count -eq 1) {
+                        Write-Verbose "OMDBYears has only one entry, we will now test that date against EpisodeOriginalAirDate"
+                        if ($OMDBYears -ge ($EpisodeOriginalAirDate | Get-Date -Format 'yyyy')) {
+                            $ShowIDInformation = New-Object PSObject -Property @{
+                                ShowName = $ShowName
+                                IMDBID = $IMDBID
+                                TVDBID = $TVDBObject.tvdbid
+                                YearsRunTime = $OMDBEntry.Year.Split('–')[0]
+                                WithinYearRunTime = $true
+                            }
+                            Write-Verbose "We have successfully verified the EpisodeOriginalAirDate against IMDB/OMDB, keeping this in memory for later"
+                        }
+                    } else {
+                        Write-Verbose "OMDBYears had more than 1 date, we will test the logic now"
+                        #See if we are within the date range of our air date and what IMDB/OMDB tells us our series run time is
+                        if (($OMDBYears[0] -ge ($EpisodeOriginalAirDate | Get-Date -Format 'yyyy')) -and (($EpisodeOriginalAirDate | Get-Date -Format 'yyyy') -le $OMDBYears[-1])) {
+                            $ShowIDInformation = New-Object PSObject -Property @{
+                                ShowName = $ShowName
+                                IMDBID = $IMDBID
+                                TVDBID = $TVDBObject.tvdbid
+                                YearsRunTime = $OMDBEntry.Year
+                                WithinYearRunTime = $true
+                            }
+                            Write-Verbose "We were able to successfully verify that EpisodeOriginalAirDate Matches IMDB/OMDB"
+                        } else {
+                            $ShowIDInformation = New-Object PSObject -Property @{
+                                ShowName = $ShowName
+                                IMDBID = $IMDBID
+                                TVDBID = $TVDBObject.tvdbid
+                                YearsRunTime = $OMDBEntry.Year
+                                WithinYearRunTime = $false
+                            }
+                            Write-Verbose "Unable to verify that EpisodeOriginalAirDate Matches IMDB/OMDB"
+                        }
+                    }
+                    #Check if our logic statements above said we are good to go!
+                    if ($ShowIDInformation.WithinYearRunTime) {
+                        #Add the show to SickRage
+                        Invoke-RestMethod -Method Get -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=show.addnew&future_status=skipped&lang=en&tvdbid=$($TVDBObject.tvdbid)"
+                        Write-Host "We would add $($TVDBObject.tvdbid) to sickrage"
+                    }
+                } #End of if Statement for Response validity
+            } #End foreach loop
+        } #End TVDBObjects Count
         
+        #Send a notification of the Show we added to SickRage        
         Send-MailMessage -To $EmailTo -From $EmailFrom -Subject "New Show '$($TVDBObject.name)' Auto added to SickRage" -SmtpServer $EmailSMTP
     }
 }
@@ -152,6 +242,7 @@ Function Get-TabloRecordingStatus ($Recording) {
     if ($JSONMetaData.recEpisode) {$JSONMetaData.recepisode.jsonForClient.video.state | Set-Variable RecIsFinished -Scope Script}
     elseif ($JSONMetaData.recMovie) {$JSONMetaData.recMovieAiring.jsonForClient.video.state | Set-Variable RecIsFinished -Scope Script}
 }
+
 
 ##########################################################################################################################################################################################################################################################################################################################
 Write-Verbose "Pinging the Tablo and checking for directories"
