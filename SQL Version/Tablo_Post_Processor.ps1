@@ -26,101 +26,144 @@ $Database = "Tablo"
 
 #Functions
 #Test SQL Server Connection
-Function Test-SQLConnection ($Server) {
-    $connectionString = "Data Source=$Server;Integrated Security=true;Initial Catalog=master;Connect Timeout=3;"
-    $sqlConn = New-Object ("Data.SqlClient.SqlConnection") $connectionString
-    trap
-    {
-        Write-Error "Cannot connect to $Server.";
-        exit
-    }
+Function Test-SQLConnection {
+    #Params
+    [CmdletBinding()]
+    Param(
+    [parameter(Position=0,Mandatory=$true)]
+        $ServerInstance,
+    [parameter()]
+        [System.Management.Automation.PSCredential]$Cred,
+    [parameter()]
+        [switch]$NoSSPI = $false
+    )
 
-    $sqlConn.Open()
-    if ($sqlConn.State -eq 'Open')
-    {
-        $sqlConn.Close();
+    Process {
+        if ($NoSSPI -and (!($Cred))) {
+            $Cred = Get-Credential
+        }
+
+        if ($NoSSPI) {
+            Write-Verbose 'Setting SQL to use local credentials'
+            $connectionString = "Data Source = $ServerInstance;Initial Catalog=master;User ID = $($cred.UserName);Password = $($cred.GetNetworkCredential().password);"
+        } else {
+            Write-Verbose 'Setting SQL to use SSPI'
+            $connectionString = "Data Source=$Server;Integrated Security=true;Initial Catalog=master;Connect Timeout=3;"
+        }
+
+        $sqlConn = New-Object ("Data.SqlClient.SqlConnection") $connectionString
+        trap {
+            Write-Error "Cannot connect to $Server.";
+            exit
+        }
+
+        $sqlConn.Open()
+        if ($sqlConn.State -eq 'Open') {
+            Write-Verbose "Successfully connected to $ServerInstance"
+            $sqlConn.Close()
+        }
     }
 }
 
-#Run-SQLQuery
 Function Run-SQLQuery {
     #Params
     [CmdletBinding()]
     Param(
-    [parameter(position=0)]
+    [parameter(Position=0,Mandatory=$true)]
         $ServerInstance,
-    [parameter(position=1)]
+    [parameter(Position=1,Mandatory=$true)]
         $Query,
-    [parameter(position=2)]
-        $Database
+    [parameter(Position=2,Mandatory=$true)]
+        $Database,
+    [parameter()]
+        [System.Management.Automation.PSCredential]$Cred,
+    [parameter()]
+        [switch]$NoSSPI = $false
     )
 
-    #Open SQL Connection
-    $SqlConnection = New-Object System.Data.SqlClient.SqlConnection 
-    $SqlConnection.ConnectionString = "Server=$ServerInstance;Database=$Database;Integrated Security=True" 
-    $SqlCmd = New-Object System.Data.SqlClient.SqlCommand 
-    $SqlCmd.Connection = $SqlConnection 
-    $SqlCmd.CommandText = $Query 
-    $SqlAdapter = New-Object System.Data.SqlClient.SqlDataAdapter 
-    $SqlAdapter.SelectCommand = $SqlCmd 
-    $DataSet = New-Object System.Data.DataSet 
-    $a=$SqlAdapter.Fill($DataSet) 
-    $SqlConnection.Close() 
-    $DataSet.Tables[0]
+    Process {
+        if ($NoSSPI -and (!($Cred))) {
+            $Cred = Get-Credential
+        }
+
+        #Open SQL Connection
+        $SqlConnection = New-Object System.Data.SqlClient.SqlConnection 
+        if ($NoSSPI) {
+            Write-Verbose 'Setting SQL to use local credentials'
+            $SqlConnection.ConnectionString = "Server = $ServerInstance;Database=$Database;User ID=$($cred.UserName);Password=$($cred.GetNetworkCredential().password);"   
+        } else {
+            Write-Verbose 'Setting SQL to use SSPI'
+            $SqlConnection.ConnectionString = "Server=$ServerInstance;Database=$Database;Integrated Security=True"
+        }
+
+        $SqlCmd = New-Object System.Data.SqlClient.SqlCommand 
+        $SqlCmd.Connection = $SqlConnection 
+        $SqlCmd.CommandText = $Query 
+        $SqlAdapter = New-Object System.Data.SqlClient.SqlDataAdapter 
+        $SqlAdapter.SelectCommand = $SqlCmd 
+        $DataSet = New-Object System.Data.DataSet 
+        $a = $SqlAdapter.Fill($DataSet) 
+        $SqlConnection.Close() 
+        $DataSet.Tables[0]
+    }
 }
 
 #Function to get metadata associated with a recording
-Function Get-TabloRecordingMetaData ($Recording) {
-    Try {
-        $MetadataURI = $TabloPVRURI + $Recording + "/meta.txt"
-        $JSONMetaData = Invoke-RestMethod -Uri $MetadataURI -Method Get -ErrorAction Stop 
+function Get-TabloRecordingMetaData ($Recording) {
+    $MetadataURI = $TabloPVRURI + $Recording + "/meta.txt"
+    $JSONMetaData = Invoke-RestMethod -Uri $MetadataURI -Method Get -ErrorAction Stop 
 
-        Write-Verbose "Check if metadata is present"
-        if ($? -eq $false) {$false | Set-Variable NoMetaData -Scope Script}
-    } Catch {$false | Set-Variable NoMetaData -Scope Script} #Force set no metadata so we don't error out later if our API call failed
+    Write-Verbose "Check if metadata is present"
+    if (!($?)) {
+        $Script:NoMetaData = $false
+    }
 
     Write-Verbose "Check to see if we are processing a Movie or a TV Show"
     if ($JSONMetaData.recEpisode) {
         Write-Verbose "A TV Show was detected"
         #Build Variables and Episode Data for later Processes
-        $JSONMetaData.recSeries.jsonForClient.title | Set-Variable ShowName -Scope Script #Get Show Title
-        $JSONMetaData.recepisode.jsonForClient.description | Set-Variable EpisodeDescription -Scope Script #Get Episode Description
-        $JSONMetaData.recepisode.jsonForClient.originalAirDate | Set-Variable EpisodeOriginalAirDate -Scope Script #Get Air Date
-        $JSONMetaData.recepisode.jsonForClient.title | Set-Variable EpisodeName -Scope Script #Get Episode Title
-        $JSONMetaData.recEpisode.jsonForClient.seasonNumber | Set-Variable EpisodeSeason -Scope Script #Get Episode Season
-        $JSONMetaData.recEpisode.jsonForClient.episodenumber | Set-Variable EpisodeNumber -Scope Script #Get Episode Number
-        $JSONMetaData.recepisode.jsonForClient.video.state | Set-Variable RecIsFinished -Scope Script #Check if Recording is finished
+        $JSONEpisode = ($JSONMetaData.recepisode | Select-Object -ExpandProperty jsonForClient)
+        $Script:ShowName = $JSONMetaData.recSeries.jsonForClient.title #Get Show Title
+        $Script:EpisodeDescription = $JSONMetaData.recepisode.jsonForClient.description #Get Episode Description
+        $Script:EpisodeOriginalAirDate = $JSONMetaData.recepisode.jsonForClient.originalAirDate #Get Air Date
+        $Script:EpisodeName = $JSONMetaData.recepisode.jsonForClient.title #Get Episode Title
+        $Script:EpisodeSeason = $JSONEpisode.seasonNumber #Get Episode Season
+        $Script:EpisodeNumber = $JSONEpisode.episodenumber #Get Episode Number
+
+        $Script:RecIsFinished = $JSONMetaData.recepisode.jsonForClient.video.state #Check if Recording is finished
 
         #Character Replacement as some Characters Piss off FFMPEG, Create File Name
         $FileName = $ShowName + "-S" +$EpisodeSeason + "E" + $EpisodeNumber
-        [string]$FileName.Replace(":","") | Set-Variable FileName -Scope Script
+        $Script:FileName = [string]$FileName.Replace(":","")
 
         #Character Replacement as some Characters Piss off FFMPEG, Create File Name as AirDate
         $JSONEpisode = ($JSONMetaData.recepisode | Select-Object -ExpandProperty jsonForClient)
         $ModifiedAirDate = ($EpisodeOriginalAirDate).Split("-")
         $ModifiedAirDate = $ModifiedAirDate[1] + '.' + $ModifiedAirDate[2] + '.' + $ModifiedAirDate[0]
         $FileName = $ShowName + " " + $ModifiedAirDate
-        [string]$FileName.Replace(":","").Replace("-",".") | Set-Variable FileNameAirDate -Scope Script
+        $Script:FileNameAirDate = [string]$FileName.Replace(":","").Replace("-",".")
 
-        'TV' | Set-Variable MediaType -Scope Script #Set the Media Type to a TV Show
+        $Script:MediaType = 'TV' #Set the Media Type to a TV Show
     } elseif ($JSONMetaData.recMovie) {
         Write-Verbose "A Movie was detected"
-        $JSONMetaData.recMovieAiring.jsonForClient.video.state | Set-Variable RecIsFinished -Scope Script #Check if Recording is finished
-        $JSONMetaData.recMovieAiring.jsonFromTribune.program.releaseYear | Set-Variable ReleaseYear -Scope Script #Get Release Year
-        $JSONMetaData.recMovieAiring.jsonFromTribune.program.title | Set-Variable MovieName -Scope Script #Get Episode Title
+        $Script:RecIsFinished = $JSONMetaData.recMovieAiring.jsonForClient.video.state #Check if Recording is finished
+        $Script:ReleaseYear = $JSONMetaData.recMovieAiring.jsonFromTribune.program.releaseYear #Get Release Year
+        $Script:MovieName =  $JSONMetaData.recMovieAiring.jsonFromTribune.program.title #Get Episode Title
         
         Write-Verbose "Character replacement as some Characters Piss off FFMPEG, Creating the File Name"
         $JSONEpisode = ($JSONMetaData.recepisode | Select-Object -ExpandProperty jsonForClient)
         $FileName = $MovieName + " (" +$ReleaseYear + ")"
-        [string]$FileName.Replace(":","") | Set-Variable FileName -Scope Script
+        $Script:FileName = [string]$FileName.Replace(":","")
 
-        'MOVIE' | Set-Variable MediaType -Scope Script #Set the Media Type to a Movie
+        $Script:MediaType = 'MOVIE' #Set the Media Type to a Movie
     }
 }
 
 #Function to checkif the file we are going to create already exists and if so append a timestamp
-Function Check-ForDuplicateFile ($Directory,$FileName) {
-    if (Test-Path -Path $Directory\$FileName -ErrorAction SilentlyContinue) {$FileName + '-' + (Get-Date -Format HH:MM-yyyy-mm-dd) | Set-Variable FileName -Scope Script} #Else do nothing and leave the file name alone.
+function Check-ForDuplicateFile ($Directory,$FileName) {
+    if (Test-Path -Path "$Directory\$FileName") {
+        $Script:FileName = $FileName + '-' + (Get-Date -Format yyyy-MM-dd_HH-mm)
+    } #Else do nothing and leave the file name alone.
 }
 
 #Function to get Series Information from the TVDB by Series ID
@@ -230,19 +273,25 @@ Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
     }
 }
 
+
 #Function to recheck the episodes recording status
-Function Get-TabloRecordingStatus ($Recording) {
+function Get-TabloRecordingStatus ($Recording) {
     $MetadataURI = $TabloPVRURI + $Recording + "/meta.txt"
     $JSONMetaData = Invoke-RestMethod -Uri $MetadataURI -Method Get -ErrorAction Stop 
 
     Write-Verbose "Check if metadata is present"
-    if ($? -eq $false) {$false | Set-Variable NoMetaData -Scope Script}
+    if (!($?)) {
+        $Script:NoMetaData = $false
+    }
 
     Write-Verbose "Check to see if we are processing a Movie or a TV Show, and then set the RecIsFinished variable"
-    if ($JSONMetaData.recEpisode) {$JSONMetaData.recepisode.jsonForClient.video.state | Set-Variable RecIsFinished -Scope Script}
-    elseif ($JSONMetaData.recMovie) {$JSONMetaData.recMovieAiring.jsonForClient.video.state | Set-Variable RecIsFinished -Scope Script}
+    if ($JSONMetaData.recEpisode) {
+        $Script:RecIsFinished = $JSONMetaData.recepisode.jsonForClient.video.state
+    }
+    elseif ($JSONMetaData.recMovie) {
+        $Script:RecIsFinished = $JSONMetaData.recMovieAiring.jsonForClient.video.state
+    }
 }
-
 
 ##########################################################################################################################################################################################################################################################################################################################
 Write-Verbose "Pinging the Tablo and checking for directories"
