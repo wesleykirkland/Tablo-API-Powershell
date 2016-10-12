@@ -202,7 +202,7 @@ Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
     } Catch [System.Net.WebException] {Send-MailMessage -To $EmailTo -From $EmailFrom -Subject 'An Error occured while calling the SickRage API' -SmtpServer $EmailSMTP}
  
     #Verify we successfully ran the query, and atleast 1 or more data results as well as the result is in english
-    If (($TVDBResults.result -eq 'success') -and ($TVDBResults.data.results.name -ge '1') -and ($TVDBResults.data.langid -eq '7')) {
+    If (($TVDBResults.result -eq 'success') -and ($TVDBResults.data.results.name -ge 1) -and ($TVDBResults.data.langid -eq 7)) {
         #Select the correct results based upon the most recent show
         $TVDBObjects = $TVDBResults.data.results | Where-Object {($PSItem.first_aired -notlike 'Unknown')} | Sort-Object first_aired -Descending
 
