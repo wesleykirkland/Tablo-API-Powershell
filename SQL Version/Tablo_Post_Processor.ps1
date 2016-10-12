@@ -19,10 +19,27 @@ $TVDBAPIKey = 'APIKEY'
 $TVDBUserKey = 'UserKey' #https://api.thetvdb.com/swagger
 $TVDBBaseURI = 'https://api.thetvdb.com' #https://api.thetvdb.com/swagger
 
-
 #SQL Variables
 $ServerInstance = "SQLPDB01"
 $Database = "Tablo"
+
+#Splatting Configs
+$MailConfig = @{
+    ErrorAction = 'STOP'
+    From        = $EmailFrom
+    SmtpServer  = $EmailSMTP
+    To          = $EmailTo
+}
+
+$RestConfigGet = @{
+    ErrorAction = 'STOP'
+    Method      = 'Get'
+}
+
+$RestConfigPost = @{
+    ErrorAction = 'STOP'
+    Method      = 'Post'
+}
 
 #Functions
 #Test SQL Server Connection
@@ -111,7 +128,7 @@ Function Run-SQLQuery {
 #Function to get metadata associated with a recording
 function Get-TabloRecordingMetaData ($Recording) {
     $MetadataURI = $TabloPVRURI + $Recording + "/meta.txt"
-    $JSONMetaData = Invoke-RestMethod -Uri $MetadataURI -Method Get -ErrorAction Stop 
+    $JSONMetaData = Invoke-RestMethod @RestConfigGet -Uri $MetadataURI
 
     Write-Verbose "Check if metadata is present"
     if (!($?)) {
@@ -180,26 +197,26 @@ function Get-TVDBSeriesInformationByID ($ShowID, $TVDBAPIKey, $TVDBUserKey) {
     })
 
     #Login to the TVDB API and get our Bearer Token
-    $TVDBToken = (Invoke-RestMethod -Method Post -Uri "$TVDBBaseURI/login" -Body $TVDBJSONLogin -Headers $TVDBHeaders).Token
+    $TVDBToken = (Invoke-RestMethod @RestConfigPost -Uri "$TVDBBaseURI/login" -Body $TVDBJSONLogin -Headers $TVDBHeaders).Token
 
     #Add our OAuth Token to our Header
     $TVDBHeaders.Add('Authorization', "Bearer $TVDBToken")
 
     #Find the ShowName
-    (Invoke-RestMethod -Method Get -Uri "$TVDBBaseURI/series/$ShowID" -Headers $TVDBHeaders).Data
+    (Invoke-RestMethod @RestConfigGet -Uri "$TVDBBaseURI/series/$ShowID" -Headers $TVDBHeaders).Data
 }
 
 #Function to get information from the Open Movie Database, thank god I don't actually have to authenticate here
 function Get-OpenMovieDataBaseByID ($IMDBId) {
-    (Invoke-RestMethod -Method Get -Uri "http://www.omdbapi.com/?i=$($IMDBId)&plot=short&r=json")
+    (Invoke-RestMethod @RestConfigGet -Uri "http://www.omdbapi.com/?i=$($IMDBId)&plot=short&r=json")
 }
 
 #Function to auto add new shows to SickRage
 Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
     #Find the TVDB ID
     Try {
-        $TVDBResults = Invoke-RestMethod -Method Get -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=sb.searchtvdb&name=$ShowName"
-    } Catch [System.Net.WebException] {Send-MailMessage -To $EmailTo -From $EmailFrom -Subject 'An Error occured while calling the SickRage API' -SmtpServer $EmailSMTP}
+        $TVDBResults = Invoke-RestMethod @RestConfigGet -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=sb.searchtvdb&name=$ShowName"
+    } Catch [System.Net.WebException] {Send-MailMessage @MailConfig -Subject 'An Error occured while calling the SickRage API'}
  
     #Verify we successfully ran the query, and atleast 1 or more data results as well as the result is in english
     If (($TVDBResults.result -eq 'success') -and ($TVDBResults.data.results.name -ge 1) -and ($TVDBResults.data.langid -eq 7)) {
@@ -210,7 +227,7 @@ Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
         if ($TVDBObjects.Count -eq 1) {
             #Add the show to SickRage
             Write-Verbose "Added $($TVDBObjects.tvdbid) - $($TVDBObjects.Name) to SickRage as it was the only valid entry"
-            Invoke-RestMethod -Method Get -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=show.addnew&future_status=skipped&lang=en&tvdbid=$($TVDBObjects.tvdbid)"
+            Invoke-RestMethod @RestConfigGet -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=show.addnew&future_status=skipped&lang=en&tvdbid=$($TVDBObjects.tvdbid)"
         } else {
             foreach ($TVDBObject in $TVDBObjects) {
                 Write-Host "Working on $($TVDBObject.tvdbid)"
@@ -262,7 +279,7 @@ Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
                     #Check if our logic statements above said we are good to go!
                     if ($ShowIDInformation.WithinYearRunTime) {
                         #Add the show to SickRage
-                        Invoke-RestMethod -Method Get -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=show.addnew&future_status=skipped&lang=en&tvdbid=$($TVDBObject.tvdbid)"
+                        Invoke-RestMethod @RestConfigGet -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=show.addnew&future_status=skipped&lang=en&tvdbid=$($TVDBObject.tvdbid)"
                         Write-Host "We would add $($TVDBObject.tvdbid) to sickrage"
                     }
                 } #End of if Statement for Response validity
@@ -270,7 +287,7 @@ Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
         } #End TVDBObjects Count
         
         #Send a notification of the Show we added to SickRage        
-        Send-MailMessage -To $EmailTo -From $EmailFrom -Subject "New Show '$($TVDBObject.name)' Auto added to SickRage" -SmtpServer $EmailSMTP
+        Send-MailMessage @MailConfig -Subject "New Show '$($TVDBObject.name)' Auto added to SickRage"
     }
 }
 
@@ -278,7 +295,7 @@ Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
 #Function to recheck the episodes recording status
 function Get-TabloRecordingStatus ($Recording) {
     $MetadataURI = $TabloPVRURI + $Recording + "/meta.txt"
-    $JSONMetaData = Invoke-RestMethod -Uri $MetadataURI -Method Get -ErrorAction Stop 
+    $JSONMetaData = Invoke-RestMethod @RestConfigGet -Uri $MetadataURI
 
     Write-Verbose "Check if metadata is present"
     if (!($?)) {
@@ -315,7 +332,7 @@ if (!(Test-Path -Path $DumpDirectoryMovies)) {
 }
 
 Write-Verbose "Query the Tablo for a list of IDs to process"
-$TabloRecordings = (Invoke-RestMethod -Uri $TabloRecordingURI -Method Get -ErrorAction Stop).ids
+$TabloRecordings = (Invoke-RestMethod @RestConfigGet -Uri $TabloRecordingURI).ids
 
 Write-Verbose "Setting the location to a working directory"
 Set-Location $TempDownload
