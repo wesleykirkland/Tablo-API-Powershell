@@ -4,8 +4,9 @@ $TempDownload = "D:\Tablo"
 $TabloRecordingURI = ("http://"+$Tablo+":18080/plex/rec_ids")
 $TabloPVRURI = ("http://"+$Tablo+":18080/pvr/")
 $FFMPEGBinary = "C:\ffmpeg\bin\ffmpeg.exe"
-$DumpDirectoryTV = "D:\Tablo\Processed_TV"
-$DumpDirectoryMovies = "D:\Tablo\Processed_Movies"
+$DumpDirectoryDriveLetter = 'D' #Replace this with the drive letter for your dump directories
+$DumpDirectoryTV = "$($DumpDirectoryDriveLetter):\Tablo\Processed_TV"
+$DumpDirectoryMovies = "$($DumpDirectoryDriveLetter):\Tablo\Processed_Movies"
 $DumpDirectoryExceptions = "\\fileserver\torrent\Downloaded Torrents" #File path for $ShowExceptionsList
 $SickRageAPIKey = 'apikey'
 $SickRageURL = 'https://SickRageorSickBeard:8081' #No Trailing '/'
@@ -14,6 +15,7 @@ $EnableSickRageSupport = $true
 $EmailTo = 'person@domain.tld'
 $EmailFrom = ($env:COMPUTERNAME + "@domain.tld")
 $EmailSMTP = 'smtp.domain.tld'
+$MinimumFreePercentage = 10 #Put a number here between 1-100 and it will be calculated down into a percentage 
 #TVDB Variables
 $TVDBAPIKey = 'APIKEY'
 $TVDBUserKey = 'UserKey' #https://api.thetvdb.com/swagger
@@ -184,7 +186,7 @@ function Check-ForDuplicateFile ($Directory,$FileName) {
 }
 
 #Function to get Series Information from the TVDB by Series ID
-function Get-TVDBSeriesInformationByID ($ShowID, $TVDBAPIKey, $TVDBUserKey) {
+function Get-TVDBSeriesInformationByID ($ShowID,$TVDBAPIKey,$TVDBUserKey) {
     #Build our TVDBHeaders
     $TVDBHeaders = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
     $TVDBHeaders.Add('Accept', 'application/json')
@@ -291,7 +293,6 @@ Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
     }
 }
 
-
 #Function to recheck the episodes recording status
 function Get-TabloRecordingStatus ($Recording) {
     $MetadataURI = $TabloPVRURI + $Recording + "/meta.txt"
@@ -329,6 +330,14 @@ if (!(Test-Path -Path $DumpDirectoryTV)) {
 }
 if (!(Test-Path -Path $DumpDirectoryMovies)) {
     New-Item -Path $DumpDirectoryMovies -ItemType dir
+}
+
+Write-Verbose 'Checking for a minimum disk space before continuing'
+$DriveObject = Get-WmiObject Win32_LogicalDisk | Where-Object {($PSItem.DeviceID -eq "$($DumpDirectoryDriveLetter):")}
+#Find the minimum free bytes
+if ($DriveObject.FreeSpace -lt ($DriveObject.Size * (".$MinimumFreePercentage"))) {
+    Write-Warning "Drive $DumpDirectoryDriveLetter has less than $($MinimumFreePercentage)% free, we will exit the script until this is resolved"
+    Send-MailMessage @MailConfig -Subject "Drive $DumpDirectoryDriveLetter has less than $($MinimumFreePercentage)% free"
 }
 
 Write-Verbose "Query the Tablo for a list of IDs to process"
