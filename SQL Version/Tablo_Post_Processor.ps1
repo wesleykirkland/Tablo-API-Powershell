@@ -225,7 +225,8 @@ Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
                     #If a show if new we can only check if the air date is newer or equal to what IMDB/OMDB tells us our series run time is, if not we will continue below
                     if ($OMDBYears.Count -eq 1) {
                         Write-Verbose "OMDBYears has only one entry, we will now test that date against EpisodeOriginalAirDate"
-                        if ($OMDBYears -ge ($EpisodeOriginalAirDate | Get-Date -Format 'yyyy')) {
+                        $OMDBEpisodeOriginalAirDateYYYY = ($EpisodeOriginalAirDate | Get-Date -Format 'yyyy')
+                        if ($OMDBYears -ge $OMDBEpisodeOriginalAirDateYYYY) {
                             $ShowIDInformation = New-Object PSObject -Property @{
                                 ShowName = $ShowName
                                 IMDBID = $IMDBID
@@ -238,7 +239,7 @@ Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
                     } else {
                         Write-Verbose "OMDBYears had more than 1 date, we will test the logic now"
                         #See if we are within the date range of our air date and what IMDB/OMDB tells us our series run time is
-                        if (($OMDBYears[0] -ge ($EpisodeOriginalAirDate | Get-Date -Format 'yyyy')) -and (($EpisodeOriginalAirDate | Get-Date -Format 'yyyy') -le $OMDBYears[-1])) {
+                        if (($OMDBYears[0] -ge $OMDBEpisodeOriginalAirDateYYYY) -and ($OMDBEpisodeOriginalAirDateYYYY -le $OMDBYears[-1])) {
                             $ShowIDInformation = New-Object PSObject -Property @{
                                 ShowName = $ShowName
                                 IMDBID = $IMDBID
