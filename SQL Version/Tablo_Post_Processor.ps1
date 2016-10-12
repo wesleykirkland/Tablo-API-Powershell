@@ -26,51 +26,90 @@ $Database = "Tablo"
 
 #Functions
 #Test SQL Server Connection
-Function Test-SQLConnection ($Server) {
-    $connectionString = "Data Source=$Server;Integrated Security=true;Initial Catalog=master;Connect Timeout=3;"
-    $sqlConn = New-Object ("Data.SqlClient.SqlConnection") $connectionString
-    trap
-    {
-        Write-Error "Cannot connect to $Server.";
-        exit
-    }
-
-    $sqlConn.Open()
-    if ($sqlConn.State -eq 'Open')
-    {
-        $sqlConn.Close();
-    }
-}
-
-#Run-SQLQuery
-Function Run-SQLQuery {
+function Test-SQLConnection {
     #Params
     [CmdletBinding()]
     Param(
-    [parameter(position=0)]
+    [parameter(Position=0,Mandatory=$true)]
         $ServerInstance,
-    [parameter(position=1)]
-        $Query,
-    [parameter(position=2)]
-        $Database
+    [parameter()]
+        [System.Management.Automation.PSCredential]$Cred,
+    [parameter()]
+        [switch]$NoSSPI = $false
     )
 
-    #Open SQL Connection
-    $SqlConnection = New-Object System.Data.SqlClient.SqlConnection 
-    $SqlConnection.ConnectionString = "Server=$ServerInstance;Database=$Database;Integrated Security=True" 
-    $SqlCmd = New-Object System.Data.SqlClient.SqlCommand 
-    $SqlCmd.Connection = $SqlConnection 
-    $SqlCmd.CommandText = $Query 
-    $SqlAdapter = New-Object System.Data.SqlClient.SqlDataAdapter 
-    $SqlAdapter.SelectCommand = $SqlCmd 
-    $DataSet = New-Object System.Data.DataSet 
-    $a=$SqlAdapter.Fill($DataSet) 
-    $SqlConnection.Close() 
-    $DataSet.Tables[0]
+    Process {
+        if ($NoSSPI -and (!($Cred))) {
+            $Cred = Get-Credential
+        }
+
+        if ($NoSSPI) {
+            Write-Verbose 'Setting SQL to use local credentials'
+            $connectionString = "Data Source = $ServerInstance;Initial Catalog=master;User ID = $($cred.UserName);Password = $($cred.GetNetworkCredential().password);"
+        } else {
+            Write-Verbose 'Setting SQL to use SSPI'
+            $connectionString = "Data Source=$Server;Integrated Security=true;Initial Catalog=master;Connect Timeout=3;"
+        }
+
+        $sqlConn = New-Object ("Data.SqlClient.SqlConnection") $connectionString
+        trap {
+            Write-Error "Cannot connect to $Server.";
+            exit
+        }
+
+        $sqlConn.Open()
+        if ($sqlConn.State -eq 'Open') {
+            Write-Verbose "Successfully connected to $ServerInstance"
+            $sqlConn.Close()
+        }
+    }
+}
+
+function Run-SQLQuery {
+    #Params
+    [CmdletBinding()]
+    Param(
+    [parameter(Position=0,Mandatory=$true)]
+        $ServerInstance,
+    [parameter(Position=1,Mandatory=$true)]
+        $Query,
+    [parameter(Position=2,Mandatory=$true)]
+        $Database,
+    [parameter()]
+        [System.Management.Automation.PSCredential]$Cred,
+    [parameter()]
+        [switch]$NoSSPI = $false
+    )
+
+    Process {
+        if ($NoSSPI -and (!($Cred))) {
+            $Cred = Get-Credential
+        }
+
+        #Open SQL Connection
+        $SqlConnection = New-Object System.Data.SqlClient.SqlConnection 
+        if ($NoSSPI) {
+            Write-Verbose 'Setting SQL to use local credentials'
+            $SqlConnection.ConnectionString = "Server = $ServerInstance;Database=$Database;User ID=$($cred.UserName);Password=$($cred.GetNetworkCredential().password);"   
+        } else {
+            Write-Verbose 'Setting SQL to use SSPI'
+            $SqlConnection.ConnectionString = "Server=$ServerInstance;Database=$Database;Integrated Security=True"
+        }
+
+        $SqlCmd = New-Object System.Data.SqlClient.SqlCommand 
+        $SqlCmd.Connection = $SqlConnection 
+        $SqlCmd.CommandText = $Query 
+        $SqlAdapter = New-Object System.Data.SqlClient.SqlDataAdapter 
+        $SqlAdapter.SelectCommand = $SqlCmd 
+        $DataSet = New-Object System.Data.DataSet 
+        $a = $SqlAdapter.Fill($DataSet) 
+        $SqlConnection.Close() 
+        $DataSet.Tables[0]
+    }
 }
 
 #Function to get metadata associated with a recording
-Function Get-TabloRecordingMetaData ($Recording) {
+function Get-TabloRecordingMetaData ($Recording) {
     Try {
         $MetadataURI = $TabloPVRURI + $Recording + "/meta.txt"
         $JSONMetaData = Invoke-RestMethod -Uri $MetadataURI -Method Get -ErrorAction Stop 
@@ -119,7 +158,7 @@ Function Get-TabloRecordingMetaData ($Recording) {
 }
 
 #Function to checkif the file we are going to create already exists and if so append a timestamp
-Function Check-ForDuplicateFile ($Directory,$FileName) {
+function Check-ForDuplicateFile ($Directory,$FileName) {
     if (Test-Path -Path $Directory\$FileName -ErrorAction SilentlyContinue) {$FileName + '-' + (Get-Date -Format HH:MM-yyyy-mm-dd) | Set-Variable FileName -Scope Script} #Else do nothing and leave the file name alone.
 }
 
@@ -152,7 +191,7 @@ function Get-OpenMovieDataBaseByID ($IMDBId) {
 }
 
 #Function to auto add new shows to SickRage
-Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
+function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
     #Find the TVDB ID
     Try {
         $TVDBResults = Invoke-RestMethod -Method Get -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=sb.searchtvdb&name=$ShowName"
@@ -231,7 +270,7 @@ Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
 }
 
 #Function to recheck the episodes recording status
-Function Get-TabloRecordingStatus ($Recording) {
+function Get-TabloRecordingStatus ($Recording) {
     $MetadataURI = $TabloPVRURI + $Recording + "/meta.txt"
     $JSONMetaData = Invoke-RestMethod -Uri $MetadataURI -Method Get -ErrorAction Stop 
 
@@ -259,7 +298,7 @@ Write-Verbose "Setting the location to a working directory"
 Set-Location $TempDownload
 
 Write-Verbose "Test SQL connection and exit if it fails"
-Test-SQLConnection $ServerInstance
+Test-SQLConnection -ServerInstance $ServerInstance
 
 Write-Verbose "Checking for exceptions in SQL, these will be used in the post processing method"
 $ShowAirDateExceptionsList = Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query "select * from [dbo].[Air_Date_Exceptions]"  | Select-Object -ExpandProperty AirDateException
