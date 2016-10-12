@@ -296,11 +296,23 @@ function Get-TabloRecordingStatus ($Recording) {
 
 ##########################################################################################################################################################################################################################################################################################################################
 Write-Verbose "Pinging the Tablo and checking for directories"
-if (!(Test-Connection -ComputerName $Tablo -Count 1)) {Write-Warning "Unable to ping the tablo, please investigate this"; exit}
-if (!(Test-Path -Path $FFMPEGBinary)) {Write-Warning "Unable to locate FFMPEG Binary, please correct the path"; exit}
-if (!(Test-Path -Path $TempDownload)) {New-Item -Path $TempDownload -ItemType dir}
-if (!(Test-Path -Path $DumpDirectoryTV)) {New-Item -Path $DumpDirectoryTV -ItemType dir}
-if (!(Test-Path -Path $DumpDirectoryMovies)) {New-Item -Path $DumpDirectoryMovies -ItemType dir}
+if (!(Test-Connection -ComputerName $Tablo -Count 1)) {
+    Write-Warning "Unable to ping the tablo, please investigate this"
+    exit
+}
+if (!(Test-Path -Path $FFMPEGBinary)) {
+    Write-Warning "Unable to locate FFMPEG Binary, please correct the path"
+    exit
+}
+if (!(Test-Path -Path $TempDownload)) {
+    New-Item -Path $TempDownload -ItemType dir
+}
+if (!(Test-Path -Path $DumpDirectoryTV)) {
+    New-Item -Path $DumpDirectoryTV -ItemType dir
+}
+if (!(Test-Path -Path $DumpDirectoryMovies)) {
+    New-Item -Path $DumpDirectoryMovies -ItemType dir
+}
 
 Write-Verbose "Query the Tablo for a list of IDs to process"
 $TabloRecordings = (Invoke-RestMethod -Uri $TabloRecordingURI -Method Get -ErrorAction Stop).ids
@@ -326,10 +338,10 @@ Get-TabloRecordingMetaData $Recording
 
     #Check if we downloaded the show before
     if (
-    ((($TVSQLSelect | Select-Object RecID) -eq $null) -or ($TVSQLSelect.Processed -like $null))`
-     -and ((Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query "SELECT RecID from MOVIE_Recordings where RECID=$Recording") -eq $null)`
-     -and ($RecIsFinished -match "finished|recording")`
-     -and ($NoMetaData -notmatch $false)) {
+    (($TVSQLSelect.RecID -eq $null) -or ($TVSQLSelect.Processed -like $null)) -and 
+    ((Run-SQLQuery -ServerInstance $ServerInstance -Database $Database -Query "SELECT RecID from MOVIE_Recordings where RECID=$Recording") -eq $null) -and
+    ($RecIsFinished -match "finished|recording") -and
+    ($NoMetaData -notmatch $false)) {
 
         Write-Verbose "Set File name depending on Exceptions List, this needs to go up top to correctly store Air Date Exceptions in SQL"
         if ($ShowAirDateExceptionsList -match $ShowName) {$FileName = $FileNameAirDate} #Else we will use the the $FileName defined in the metadata function(s)
