@@ -4,26 +4,50 @@ $TempDownload = "D:\Tablo"
 $TabloRecordingURI = ("http://"+$Tablo+":18080/plex/rec_ids")
 $TabloPVRURI = ("http://"+$Tablo+":18080/pvr/")
 $FFMPEGBinary = "C:\ffmpeg\bin\ffmpeg.exe"
-$DumpDirectoryTV = "D:\Tablo\Processed_TV"
-$DumpDirectoryMovies = "D:\Tablo\Processed_Movies"
+$DumpDirectoryDriveLetter = 'D' #Replace this with the drive letter for your dump directories
+$DumpDirectoryTV = "$($DumpDirectoryDriveLetter):\Tablo\Processed_TV"
+$DumpDirectoryMovies = "$($DumpDirectoryDriveLetter):\Tablo\Processed_Movies"
 $DumpDirectoryExceptions = "\\fileserver\torrent\Downloaded Torrents" #File path for $ShowExceptionsList
 $SickRageAPIKey = 'apikey'
 $SickRageURL = 'https://SickRageorSickBeard:8081' #No Trailing '/'
 $EnableSickRageSupport = $true
-$EnableSickRageSupport = $true
 $EmailTo = 'person@domain.tld'
 $EmailFrom = ($env:COMPUTERNAME + "@domain.tld")
 $EmailSMTP = 'smtp.domain.tld'
+$MinimumFreePercentage = 10 #Put a number here between 1-100 and it will be calculated down into a percentage 
 #TVDB Variables
 $TVDBAPIKey = 'APIKEY'
 $TVDBUserKey = 'UserKey' #https://api.thetvdb.com/swagger
 $TVDBBaseURI = 'https://api.thetvdb.com' #https://api.thetvdb.com/swagger
 
-
 #SQL Variables
 $ServerInstance = "SQLPDB01"
 $Database = "Tablo"
 
+#Splatting Configs
+$MailConfig = @{
+    ErrorAction = 'STOP'
+    From        = $EmailFrom
+    SmtpServer  = $EmailSMTP
+    To          = $EmailTo
+}
+
+$RestConfigGet = @{
+    ErrorAction = 'STOP'
+    Method      = 'Get'
+}
+
+$RestConfigPost = @{
+    ErrorAction = 'STOP'
+    Method      = 'Post'
+}
+
+$SQLConfig = @{
+    ServerInstance = $ServerInstance
+    Database = $Database
+}
+
+#region Function
 #Functions
 #Test SQL Server Connection
 Function Test-SQLConnection {
@@ -289,6 +313,7 @@ function Get-TabloRecordingStatus ($Recording) {
         $Script:RecIsFinished = $JSONMetaData.recMovieAiring.jsonForClient.video.state
     }
 }
+#endregion
 
 ##########################################################################################################################################################################################################################################################################################################################
 Write-Verbose "Pinging the Tablo and checking for directories"
