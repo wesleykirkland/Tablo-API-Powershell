@@ -424,8 +424,8 @@ Write-Verbose "Test SQL connection and exit if it fails"
 Test-SQLConnection $ServerInstance
 
 Write-Verbose "Checking for exceptions in SQL, these will be used in the post processing method"
-$ShowAirDateExceptionsList = Run-SQLQuery @SQLConfig -Query "select * from [dbo].[Air_Date_Exceptions]"  | Select-Object -ExpandProperty AirDateException
-$ShowExceptionsList = Run-SQLQuery @SQLConfig -Query "select * from [dbo].[Post_Processing_Exceptions]" | Select-Object -ExpandProperty PostProcessException
+$ShowAirDateExceptionsList = Run-SQLQuery @SQLConfig -Query "SELECT * FROM [dbo].[Air_Date_Exceptions]"  | Select-Object -ExpandProperty AirDateException
+$ShowExceptionsList = Run-SQLQuery @SQLConfig -Query "SELECT * FROM [dbo].[Post_Processing_Exceptions]" | Select-Object -ExpandProperty PostProcessException
 
 #Build Foreach Loop to build folders and to download the raw TS files
 foreach ($Recording in $TabloRecordings) {
@@ -439,7 +439,7 @@ foreach ($Recording in $TabloRecordings) {
     #Check if we downloaded the show before
     if (
     (($TVSQLSelect.RecID -eq $null) -or ($TVSQLSelect.Processed -like $null)) -and 
-    ((Run-SQLQuery @SQLConfig -Query "SELECT RecID from MOVIE_Recordings where RECID=$Recording") -eq $null) -and
+    ((Run-SQLQuery @SQLConfig -Query "SELECT RecID FROM MOVIE_Recordings WHERE RECID=$Recording") -eq $null) -and
     ($RecIsFinished -match "finished|recording") -and
     ($NoMetaData -notmatch $false) -and
     ($Script:EpisodeWarnings -notcontains "http://api.slipstream.nuvyyo.com/warning/recording/tooShort" )) {
