@@ -230,9 +230,9 @@ CREATE TABLE [dbo].[MOVIE_Recordings](
 GO
 
 ALTER TABLE [dbo].[MOVIE_Recordings] ADD  CONSTRAINT [DF_MOVIE_Recordings_Media]  DEFAULT (N'MOVIE') FOR [Media]
-GO
+G
 
-/****** Object:  Table [dbo].[TV_Recordings_Warnings]    Script Date: 11/18/2016 9:32:15 PM ******/
+/****** Object:  Table [dbo].[TV_Recordings_Warnings]    Script Date: 11/18/2016 10:33:03 PM ******/
 SET ANSI_NULLS ON
 GO
 
@@ -247,8 +247,9 @@ CREATE TABLE [dbo].[TV_Recordings_Warnings](
 	[Show] [varchar](100) NOT NULL,
 	[EpisodeSeason] [numeric](4, 0) NULL,
 	[EpisodeNumber] [numeric](4, 0) NULL,
-	[AirDate] [nchar](10) NOT NULL
-) ON [PRIMARY]
+	[AirDate] [date] NOT NULL,
+	[Warnings] [text] NOT NULL
+) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
 
 GO
 
@@ -261,5 +262,3 @@ GO
 
 ALTER TABLE [dbo].[TV_Recordings_Warnings] CHECK CONSTRAINT [FK_TV_Recordings_Warnings_TV_Shows]
 GO
-
-

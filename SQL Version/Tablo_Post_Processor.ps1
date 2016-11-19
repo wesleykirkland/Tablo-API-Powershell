@@ -476,9 +476,20 @@ foreach ($Recording in $TabloRecordings) {
                         Add-ToSickRage -ShowName $DatabaseEntry.Show -SickRageAPIKey $SickRageAPIKey -SickRageURL $SickRageURL
                     }
                 }
+                    if ($Script:EpisodeWarnings -contains "http://api.slipstream.nuvyyo.com/warning/recording/tooShort") {
+                        Run-SQLQuery @SQLConfig -Query "INSERT INTO TV_Recordings_Warning (RecID,Show,EpisodeSeason,EpisodeNumber,AirDate,Warnings) VALUES ('$($DatabaseEntry.RecID)','$($DatabaseEntry.Show)','$($DatabaseEntry.EpisodeSeason)','$($DatabaseEntry.EpisodeNumber)','$($DatabaseEntry.AirDate)','$($Script:EpisodeWarnings)')"
+                        if ($EmailNotifications) {
+                            Send-MailMessage @MailConfig -Subject "Failed Recording (Length): $($Script:FileName)"
+                        }
 
-                    Write-Verbose "Build SQL Insert to insert the entry into SQL [TV_Recordings]"
-                    $SQLInsert = "INSERT INTO [dbo].[TV_Recordings] (RecID,FileName,EpisodeName,Show,EpisodeNumber,EpisodeSeason,AirDate,PostProcessDate,Description,Media) VALUES ('{0}','{1}','{2}','{3}','{4}','{5}','{6}','{7}','{8}','{9}')" -f $DatabaseEntry.RecID,$DatabaseEntry.FileName,$DatabaseEntry.EpisodeName,$DatabaseEntry.Show,$DatabaseEntry.EpisodeNumber,$DatabaseEntry.EpisodeSeason,$DatabaseEntry.AirDate,$DatabaseEntry.PostProcessDate,$DatabaseEntry.Description,$DatabaseEntry.Media
+                        if ($SlackNotifications) {
+                            Send-SlackNotification @SlackConfig -Message "Failed Recording (Length): $($Script:FileName)"
+                        }
+                    }
+                    else {
+                        Write-Verbose "Build SQL Insert to insert the entry into SQL [TV_Recordings]"
+                        $SQLInsert = "INSERT INTO [dbo].[TV_Recordings] (RecID,FileName,EpisodeName,Show,EpisodeNumber,EpisodeSeason,AirDate,PostProcessDate,Description,Media) VALUES ('$($DatabaseEntry.RecID)','$($DatabaseEntry.FileName)','$($DatabaseEntry.EpisodeName)','$($DatabaseEntry.Show)','$($DatabaseEntry.EpisodeNumber)','$($DatabaseEntry.EpisodeSeason)','$($DatabaseEntry.AirDate)','$($DatabaseEntry.PostProcessDate)','$($DatabaseEntry.Description)','$($DatabaseEntry.Media)')"
+                    }
                 } elseif ($MediaType -eq 'MOVIE') {
                     $SQLInsert = "INSERT INTO [dbo].[MOVIE_Recordings] (RecID,FileName,AirDate,PostProcessDate,Media,Processed) VALUES ('{0}','{1}','{2}','{3}','{4}','')" -f $DatabaseEntry.RecID,$DatabaseEntry.FileName,$DatabaseEntry.AirDate,$DatabaseEntry.PostProcessDate,$DatabaseEntry.Media
                 }
