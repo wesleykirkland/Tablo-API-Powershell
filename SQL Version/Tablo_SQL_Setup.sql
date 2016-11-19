@@ -125,10 +125,6 @@ CREATE TABLE [dbo].[Post_Processing_Exceptions](
 
 GO
 
-
-USE [Tablo]
-GO
-
 /****** Object:  Table [dbo].[TV_Shows]    Script Date: 7/3/2016 1:39:43 PM ******/
 SET ANSI_NULLS ON
 GO
@@ -147,9 +143,6 @@ CREATE TABLE [dbo].[TV_Shows](
 GO
 
 
-USE [Tablo]
-GO
-
 /****** Object:  Table [dbo].[TV_Recordings]    Script Date: 7/3/2016 1:39:37 PM ******/
 SET ANSI_NULLS ON
 GO
@@ -163,7 +156,7 @@ CREATE TABLE [dbo].[TV_Recordings](
 	[EpisodeName] [varchar](255) NULL,
 	[Show] [varchar](100) NOT NULL,
 	[EpisodeSeason] [numeric](4, 0) NULL,
-	[EpisodeNumber] [numeric](3, 0) NULL,
+	[EpisodeNumber] [numeric](4, 0) NULL,
 	[AirDate] [date] NOT NULL,
 	[PostProcessDate] [datetime] NOT NULL,
 	[Description] [text] NULL,
@@ -194,9 +187,6 @@ EXEC sys.sp_addextendedproperty @name=N'MS_Description', @value=N'TV Show Key' ,
 GO
 
 
-USE [Tablo]
-GO
-
 /****** Object:  Table [dbo].[Air_Date_Exceptions]    Script Date: 7/3/2016 1:39:25 PM ******/
 SET ANSI_NULLS ON
 GO
@@ -215,9 +205,6 @@ CREATE TABLE [dbo].[Air_Date_Exceptions](
 
 GO
 
-
-USE [Tablo]
-GO
 
 /****** Object:  Table [dbo].[MOVIE_Recordings]    Script Date: 7/3/2016 1:39:13 PM ******/
 SET ANSI_NULLS ON
@@ -243,6 +230,36 @@ CREATE TABLE [dbo].[MOVIE_Recordings](
 GO
 
 ALTER TABLE [dbo].[MOVIE_Recordings] ADD  CONSTRAINT [DF_MOVIE_Recordings_Media]  DEFAULT (N'MOVIE') FOR [Media]
+GO
+
+/****** Object:  Table [dbo].[TV_Recordings_Warnings]    Script Date: 11/18/2016 9:32:15 PM ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+SET ANSI_PADDING ON
+GO
+
+CREATE TABLE [dbo].[TV_Recordings_Warnings](
+	[RecID] [numeric](16, 0) NOT NULL,
+	[Show] [varchar](100) NOT NULL,
+	[EpisodeSeason] [numeric](4, 0) NULL,
+	[EpisodeNumber] [numeric](4, 0) NULL,
+	[AirDate] [nchar](10) NOT NULL
+) ON [PRIMARY]
+
+GO
+
+SET ANSI_PADDING OFF
+GO
+
+ALTER TABLE [dbo].[TV_Recordings_Warnings]  WITH CHECK ADD  CONSTRAINT [FK_TV_Recordings_Warnings_TV_Shows] FOREIGN KEY([Show])
+REFERENCES [dbo].[TV_Shows] ([Show])
+GO
+
+ALTER TABLE [dbo].[TV_Recordings_Warnings] CHECK CONSTRAINT [FK_TV_Recordings_Warnings_TV_Shows]
 GO
 
 
