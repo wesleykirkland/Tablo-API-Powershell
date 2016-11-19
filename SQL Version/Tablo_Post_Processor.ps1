@@ -510,13 +510,16 @@ foreach ($Recording in $TabloRecordings) {
 
             #CD to Download Directory
             Set-Location $Recording
+            $pwd = Get-Location | Select-Object -ExpandProperty Path #Get the current working directory for the .Net client download
 
             if ($RecIsFinished -eq 'recording') {
                 Write-Verbose "Recording in progress, do until loop to download all the clips from the Tablo, so we can join them together later"
                 do {
                     $RecordedLinks = ((Invoke-WebRequest -Uri $RecordingURI).links | Where-Object {($_.href -match '[0-9]')}).href
                     foreach ($Link in $RecordedLinks) {
-                        if (!(Test-Path -Path $Link)) {Invoke-WebRequest -URI ($RecordingURI + $Link) -OutFile $Link}
+                        if (!(Test-Path -Path $Link)) {
+                            (New-Object System.Net.WebClient).DownloadFile("$($RecordingURI)$($Link)", "$pwd\$Link")
+                        }
                     }
                     Get-TabloRecordingStatus -Recording $Recording
                     [System.GC]::Collect() #.Net method to clean up the ram
@@ -525,7 +528,7 @@ foreach ($Recording in $TabloRecordings) {
             } elseif ($RecIsFinished -eq 'finished') {
                 Write-Verbose "Recording is finished, downloading all the clips from the Tablo, so we can join them together later"
                 foreach ($Link in $RecordedLinks) {
-                    Invoke-WebRequest -URI ($RecordingURI + $Link) -OutFile $Link
+                    (New-Object System.Net.WebClient).DownloadFile("$($RecordingURI)$($Link)", "$pwd\$Link")
                 }
             }
 
