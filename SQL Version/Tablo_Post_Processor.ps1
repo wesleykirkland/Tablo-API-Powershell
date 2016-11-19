@@ -14,11 +14,16 @@ $EnableSickRageSupport = $true
 $EmailTo = 'person@domain.tld'
 $EmailFrom = ($env:COMPUTERNAME + "@domain.tld")
 $EmailSMTP = 'smtp.domain.tld'
-$MinimumFreePercentage = 10 #Put a number here between 1-100 and it will be calculated down into a percentage 
+$MinimumFreePercentage = 10 #Put a number here between 1-100 and it will be calculated down into a percentage
+$SlackNotifications = $true
+$EmailNotifications = $false
 #TVDB Variables
 $TVDBAPIKey = 'APIKEY'
 $TVDBUserKey = 'UserKey' #https://api.thetvdb.com/swagger
 $TVDBBaseURI = 'https://api.thetvdb.com' #https://api.thetvdb.com/swagger
+#Slack Variables
+$SlackChannel = 'media_notifications'
+$SlackWebHookUrl = 'https://hooks.slack.com'
 
 #SQL Variables
 $ServerInstance = "SQLPDB01"
@@ -45,6 +50,11 @@ $RestConfigPost = @{
 $SQLConfig = @{
     ServerInstance = $ServerInstance
     Database = $Database
+}
+
+$SlackConfig = @{
+    SlackWebHook = $SlackWebHookUrl
+    SlackChannel = $SlackChannel
 }
 
 #region Function
@@ -220,7 +230,15 @@ Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
     #Find the TVDB ID
     Try {
         $TVDBResults = Invoke-RestMethod @RestConfigGet -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=sb.searchtvdb&name=$ShowName"
-    } Catch [System.Net.WebException] {Send-MailMessage @MailConfig -Subject 'An Error occured while calling the SickRage API'}
+    } Catch [System.Net.WebException] {
+        if ($EmailNotifications) {
+            Send-MailMessage @MailConfig -Subject 'An Error occured while calling the SickRage API'
+        }
+
+        if ($SlackNotifications) {
+            Send-SlackNotification @SlackConfig -Message 'An Error occured while calling the SickRage API'
+        }
+    }
  
     #Verify we successfully ran the query, and atleast 1 or more data results as well as the result is in english
     If (($TVDBResults.result -eq 'success') -and ($TVDBResults.data.results.name -ge 1) -and ($TVDBResults.data.langid -eq 7)) {
@@ -291,7 +309,13 @@ Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
         } #End TVDBObjects Count
         
         #Send a notification of the Show we added to SickRage        
-        Send-MailMessage @MailConfig -Subject "New Show '$($TVDBObject.name)' Auto added to SickRage"
+        if ($EmailNotifications) {
+            Send-MailMessage @MailConfig -Subject "New Show '$($TVDBObject.name)' Auto added to SickRage"
+        }
+
+        if ($SlackNotifications) {
+            Send-SlackNotification @SlackConfig -Message "New Show '$($TVDBObject.name)' Auto added to SickRage"
+        }
     }
 }
 
@@ -312,6 +336,38 @@ function Get-TabloRecordingStatus ($Recording) {
     elseif ($JSONMetaData.recMovie) {
         $Script:RecIsFinished = $JSONMetaData.recMovieAiring.jsonForClient.video.state
     }
+}
+
+#Function to send notifications to slack
+function Send-SlackNotification {
+    # ----------------------------------------------------------------------------------------------
+    # Copyright (c) WCOM AB 2016.
+    # ----------------------------------------------------------------------------------------------
+    # This source code is subject to terms and conditions of the The MIT License (MIT)
+    # copy of the license can be found in the LICENSE file at the root of this distribution.
+    # ----------------------------------------------------------------------------------------------
+    # You must not remove this notice, or any other, from this software.
+    # ----------------------------------------------------------------------------------------------
+    Param(
+        [string]$SlackWebHook,
+        [string]$SlackChannel,
+        [string]$Message
+    )
+
+    Add-Type -AssemblyName System.Web.Extensions
+
+    $postSlackMessage = ConvertTo-Json(
+        @{
+            channel      = $SlackChannel;
+            unfurl_links = "true";
+            username     = "Tablo API";
+            icon_url     = "https://www.rokuchannels.tv/wp-content/uploads/2015/02/tablotv.jpg"
+            text         = "$Message";
+        }
+    )
+
+    [System.Net.WebClient] $webclient = New-Object 'System.Net.WebClient'
+    $webclient.UploadData($SlackWebHook, [System.Text.Encoding]::UTF8.GetBytes($postSlackMessage))
 }
 #endregion
 
@@ -340,7 +396,13 @@ $DriveObject = Get-WmiObject Win32_LogicalDisk | Where-Object {($PSItem.DeviceID
 #Find the minimum free bytes
 if ($DriveObject.FreeSpace -lt ($DriveObject.Size * (".$MinimumFreePercentage"))) {
     Write-Warning "Drive $DumpDirectoryDriveLetter has less than $($MinimumFreePercentage)% free, we will exit the script until this is resolved"
-    Send-MailMessage @MailConfig -Subject "Drive $DumpDirectoryDriveLetter has less than $($MinimumFreePercentage)% free"
+    if ($EmailNotifications) {
+        Send-MailMessage @MailConfig -Subject "Drive $DumpDirectoryDriveLetter has less than $($MinimumFreePercentage)% free"
+    }
+    
+    if ($SlackNotifications) {
+        Send-SlackNotification @SlackConfig -Message "Drive $DumpDirectoryDriveLetter has less than $($MinimumFreePercentage)% free"
+    }
     exit #Exit because we are below the minimum free percentage
 }
 
