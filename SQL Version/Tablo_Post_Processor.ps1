@@ -57,8 +57,7 @@ $SlackConfig = @{
     SlackChannel = $SlackChannel
 }
 
-#region Function
-#Functions
+#region Functions
 #Test SQL Server Connection
 Function Test-SQLConnection {
     #Params
@@ -408,9 +407,10 @@ if ($DriveObject.FreeSpace -lt ($DriveObject.Size * (".$MinimumFreePercentage"))
 
 Write-Verbose "Query the Tablo for a list of IDs to process"
 Try {
+    #See if the plex API is available
     $TabloRecordings = (Invoke-RestMethod @RestConfigGet -Uri $TabloRecordingURI).ids
 } Catch {
-    Write-Verbose 'ERROR! Fallback to use regex to pull the recids'
+    Write-Verbose 'Unable to query Plex API endpoint, falling back to use regex to pull the recids'
     $URI = $TabloPVRURI
     $HTMLBody = (Invoke-RestMethod -Uri $URI -Method Get).split('\n')
     $Recs = $HTMLBody -match '<a\s+(?:[^>]*?\s+)?href="([^"]*)"' | Where-Object {($PSItem -notlike "*Pare")}
@@ -441,8 +441,7 @@ foreach ($Recording in $TabloRecordings) {
     (($TVSQLSelect.RecID -eq $null) -or ($TVSQLSelect.Processed -like $null)) -and 
     ((Run-SQLQuery @SQLConfig -Query "SELECT RecID FROM MOVIE_Recordings WHERE RECID=$Recording") -eq $null) -and
     ($RecIsFinished -match "finished|recording") -and
-    ($NoMetaData -notmatch $false) -and
-    ($Script:EpisodeWarnings -notcontains "http://api.slipstream.nuvyyo.com/warning/recording/tooShort" )) {
+    ($NoMetaData -notmatch $false)) {
 
             Write-Verbose "Set File name depending on Exceptions List, this needs to go up top to correctly store Air Date Exceptions in SQL"
             if ($ShowAirDateExceptionsList -match $ShowName) {
@@ -491,10 +490,12 @@ foreach ($Recording in $TabloRecordings) {
 
             Write-Verbose "Build Variables to Download TS recorded files"
             $RecordingURI = ($TabloPVRURI + $Recording + "/segs/")
-            $RecordedLinks = ((Invoke-WebRequest -Uri $RecordingURI).links | Where-Object {($_.href -match '[0-9]')}).href
+            $RecordedLinks = ((Invoke-WebRequest -Uri $RecordingURI).links | Where-Object {($PSItem.href -match '[0-9]')}).href
 
             Write-Verbose "Create a temporary folder to store the recording files"
-            if (!(Test-Path $Recording)) {New-Item ($Recording) -ItemType dir}
+            if (!(Test-Path $Recording)) {
+                New-Item $Recording -ItemType dir
+            }
 
             #CD to Download Directory
             Set-Location $Recording
