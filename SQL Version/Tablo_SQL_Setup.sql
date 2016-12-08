@@ -163,6 +163,7 @@ CREATE TABLE [dbo].[TV_Recordings](
 	[Media] [varchar](10) NOT NULL,
 	[Processed] [bit] NULL,
 	[ProcessedByMCEBuddy] [bit] NULL,
+	[Warnings] [bit] NULL,
  CONSTRAINT [PK_TV_Recordings] PRIMARY KEY CLUSTERED 
 (
 	[RecID] ASC
@@ -221,6 +222,7 @@ CREATE TABLE [dbo].[MOVIE_Recordings](
 	[Media] [varchar](10) NOT NULL,
 	[Processed] [bit] NULL,
 	[ProcessedByMCEBuddy] [bit] NULL,
+	[Warnings] [bit] NULL,
  CONSTRAINT [PK_MOVIE_Recordings] PRIMARY KEY CLUSTERED 
 (
 	[RecID] ASC
