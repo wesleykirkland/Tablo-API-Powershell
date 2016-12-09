@@ -572,10 +572,23 @@ foreach ($Recording in $TabloRecordings) {
             Write-Verbose 'Building SQL Insert to insert entry into [Movie_Recordings]'
             $SQLInsert = "INSERT INTO [dbo].[MOVIE_Recordings] (RecID,FileName,AirDate,PostProcessDate,Media,Processed) VALUES ('$($DatabaseEntry.RecID)','$($DatabaseEntry.FileName)','$($DatabaseEntry.AirDate)','$($DatabaseEntry.PostProcessDate)','$($DatabaseEntry.Media)')"
         }
+
+        Write-Verbose "Inserting recording $Recording into SQL"
         Run-SQLQuery @SQLConfig -Query $SQLInsert
+
+        Write-Verbose "Set File name depending on Exceptions List, this needs to go up top to correctly store Air Date Exceptions in SQL"
+        if ($ShowAirDateExceptionsList -match $ShowName) {
+            $FileName = $FileNameAirDate
+        } #Else we will use the the $FileName defined in the metadata function(s)
+
+        Write-Verbose "Invoking the Tablo download function on recording $Recording"
+        Invoke-TabloRecordingDownload
 
     } elseif (!(($TVSQLSelect.Recid -notlike $null) -and ($TVSQLSelect.Processed -like $null))) {
         Write-Verbose "Recording $Recording was detected as a failed download, and we will reprocess it"
+        Remove-Item $Recording -Recurse -Force #Remove the folder and start over, we want good files and not bad files
+        
+        Write-Verbose "Invoking the Tablo download function on recording $Recording"
         Invoke-TabloRecordingDownload
     } elseif ($NoMetaData -eq $false) {
         Write-Output "$Recording does not have any metadata, skipping"
@@ -586,62 +599,3 @@ foreach ($Recording in $TabloRecordings) {
 
 
 } #End foreach loop
-
-
-
-
-
-
-
-            Write-Verbose "Set File name depending on Exceptions List, this needs to go up top to correctly store Air Date Exceptions in SQL"
-            if ($ShowAirDateExceptionsList -match $ShowName) {
-                $FileName = $FileNameAirDate
-            } #Else we will use the the $FileName defined in the metadata function(s)
-
-
-            #Check if we are processing a failed download, if not insert everything into SQL
-            if (!(($TVSQLSelect.Recid -notlike $null) -and ($TVSQLSelect.Processed -like $null))) {
-Write-Verbose "Build SQL Query to insert the DataBase Entry into the Database"
-if ($MediaType -eq 'TV') {
-#Check if the show exists in the Shows table if not add it to [TV_Shows]
-if (!(Run-SQLQuery @SQLConfig -Query "SELECT SHOW FROM [dbo].[TV_Shows] WHERE SHOW = '$($DatabaseEntry.show)'").Show -eq $DatabaseEntry.Show) {
-#Update SQL with New Show
-Run-SQLQuery @SQLConfig -Query "INSERT INTO [dbo].[TV_Shows] (Show) VALUES ('$($DatabaseEntry.Show)')"
-
-Write-Verbose "Adding New Show to SickRage if SickRage Support is enabled"
-if ($EnableSickRageSupport) {
-Add-ToSickRage -ShowName $DatabaseEntry.Show -SickRageAPIKey $SickRageAPIKey -SickRageURL $SickRageURL
-}
-}
-else {
-Write-Verbose "Build SQL Insert to insert the entry into SQL [TV_Recordings]"
-$SQLInsert = "INSERT INTO [dbo].[TV_Recordings] (RecID,FileName,EpisodeName,Show,EpisodeNumber,EpisodeSeason,AirDate,PostProcessDate,Description,Media) VALUES ('$($DatabaseEntry.RecID)','$($DatabaseEntry.FileName)','$($DatabaseEntry.EpisodeName)','$($DatabaseEntry.Show)','$($DatabaseEntry.EpisodeNumber)','$($DatabaseEntry.EpisodeSeason)','$($DatabaseEntry.AirDate)','$($DatabaseEntry.PostProcessDate)','$($DatabaseEntry.Description)','$($DatabaseEntry.Media)')"
-}
-} elseif ($MediaType -eq 'MOVIE') {
-$SQLInsert = "INSERT INTO [dbo].[MOVIE_Recordings] (RecID,FileName,AirDate,PostProcessDate,Media,Processed) VALUES ('$($DatabaseEntry.RecID)','$($DatabaseEntry.FileName)','$($DatabaseEntry.AirDate)','$($DatabaseEntry.PostProcessDate)','$($DatabaseEntry.Media)')"
-}
-Run-SQLQuery @SQLConfig -Query $SQLInsert
-            } else {
-                #Remove the folder and start over, we want good files and not bad files
-                Remove-Item $Recording -Recurse -Force
-            }
-
-        
-    #Clear Varibles that can cause issues, outside of the if statement so the variables are removed every time
-    Remove-Variable RecIsFinished -ErrorAction SilentlyContinue
-    Remove-Variable DatabaseEntry -ErrorAction SilentlyContinue
-    Remove-Variable NoMetaData -ErrorAction SilentlyContinue
-    Remove-Variable ShowException -ErrorAction SilentlyContinue
-    Remove-Variable MediaType -ErrorAction SilentlyContinue
-    Remove-Variable FileName -ErrorAction SilentlyContinue
-    Remove-Variable FileNameAirDate -ErrorAction SilentlyContinue
-    Remove-Variable MovieYear -ErrorAction SilentlyContinue
-    Remove-Variable ReleaseYear -ErrorAction SilentlyContinue
-    Remove-Variable EpisodeDescription -ErrorAction SilentlyContinue
-    Remove-Variable SQLInsert -ErrorAction SilentlyContinue
-    Remove-Variable ShowName -ErrorAction SilentlyContinue
-    Remove-Variable EpisodeSeason -ErrorAction SilentlyContinue
-    Remove-Variable EpisodeNumber -ErrorAction SilentlyContinue
-
-    [System.GC]::Collect() #.Net method to run garbage collection
-}
