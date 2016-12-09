@@ -509,11 +509,12 @@ foreach ($Recording in $TabloRecordings) {
     Get-TabloRecordingMetaData $Recording
 
     #SQL Select statement since we will run multiple if statements against it
-    $TVSQLSelect = Run-SQLQuery @SQLConfig -Query "SELECT Recid,Processed FROM TV_Recordings where RECID=$Recording"
+    $TVSQLSelect = Run-SQLQuery @SQLConfig -Query "SELECT Recid,Processed,Warnings FROM TV_Recordings where RECID=$Recording"
 
     #Check to see if we need to process the show
     if (
     (($TVSQLSelect.RecID -eq $null) -or ($TVSQLSelect.Processed -like $null)) -and #Make sure the RecID is null and processed has not been set
+    (!($TVSQLSelect.Warnings)) -and
     ((Run-SQLQuery @SQLConfig -Query "SELECT RecID FROM MOVIE_Recordings WHERE RECID=$Recording") -eq $null) -and #Make sure we are not processing a movie
     ($RecIsFinished -match "finished|recording") -and #See if the recording status is finished or recording
     ($NoMetaData -notmatch $false)) { #Verify we have valid metadata for the file
@@ -567,10 +568,10 @@ foreach ($Recording in $TabloRecordings) {
         Write-Verbose 'Finding out if recording is a TV show or Movie'
         if ($MediaType -eq 'TV') {
             Write-Verbose 'Building SQL Insert to insert entry into [Movie_Recordings]'
-            $SQLInsert = "INSERT INTO [dbo].[TV_Recordings] (RecID,FileName,EpisodeName,Show,EpisodeNumber,EpisodeSeason,AirDate,PostProcessDate,Description,Media) VALUES ('$($DatabaseEntry.RecID)','$($DatabaseEntry.FileName)','$($DatabaseEntry.EpisodeName)','$($DatabaseEntry.Show)','$($DatabaseEntry.EpisodeNumber)','$($DatabaseEntry.EpisodeSeason)','$($DatabaseEntry.AirDate)','$($DatabaseEntry.PostProcessDate)','$($DatabaseEntry.Description)','$($DatabaseEntry.Media)')"
+            $SQLInsert = "INSERT INTO [dbo].[TV_Recordings] (RecID,FileName,EpisodeName,Show,EpisodeNumber,EpisodeSeason,AirDate,PostProcessDate,Description,Media,Warnings) VALUES ('$($DatabaseEntry.RecID)','$($DatabaseEntry.FileName)','$($DatabaseEntry.EpisodeName)','$($DatabaseEntry.Show)','$($DatabaseEntry.EpisodeNumber)','$($DatabaseEntry.EpisodeSeason)','$($DatabaseEntry.AirDate)','$($DatabaseEntry.PostProcessDate)','$($DatabaseEntry.Description)','$($DatabaseEntry.Media)','$($Script:EpisodeWarnings)')"
         } elseif ($MediaType -eq 'MOVIE') {
             Write-Verbose 'Building SQL Insert to insert entry into [Movie_Recordings]'
-            $SQLInsert = "INSERT INTO [dbo].[MOVIE_Recordings] (RecID,FileName,AirDate,PostProcessDate,Media,Processed) VALUES ('$($DatabaseEntry.RecID)','$($DatabaseEntry.FileName)','$($DatabaseEntry.AirDate)','$($DatabaseEntry.PostProcessDate)','$($DatabaseEntry.Media)')"
+            $SQLInsert = "INSERT INTO [dbo].[MOVIE_Recordings] (RecID,FileName,AirDate,PostProcessDate,Media,Processed,Warnings) VALUES ('$($DatabaseEntry.RecID)','$($DatabaseEntry.FileName)','$($DatabaseEntry.AirDate)','$($DatabaseEntry.PostProcessDate)','$($DatabaseEntry.Media)','$($Script:EpisodeWarnings)')"
         }
 
         Write-Verbose "Inserting recording $Recording into SQL"
@@ -581,9 +582,10 @@ foreach ($Recording in $TabloRecordings) {
             $FileName = $FileNameAirDate
         } #Else we will use the the $FileName defined in the metadata function(s)
 
-        Write-Verbose "Invoking the Tablo download function on recording $Recording"
-        Invoke-TabloRecordingDownload
-
+        if (!($Script:EpisodeWarnings)) {
+            Write-Verbose "Invoking the Tablo download function on recording $Recording"
+            Invoke-TabloRecordingDownload
+        }
     } elseif (!(($TVSQLSelect.Recid -notlike $null) -and ($TVSQLSelect.Processed -like $null))) {
         Write-Verbose "Recording $Recording was detected as a failed download, and we will reprocess it"
         Remove-Item $Recording -Recurse -Force #Remove the folder and start over, we want good files and not bad files
@@ -595,7 +597,4 @@ foreach ($Recording in $TabloRecordings) {
     } else {
         Write-Output "$Recording has already been downloaded and processed"
     }
-
-
-
 } #End foreach loop
