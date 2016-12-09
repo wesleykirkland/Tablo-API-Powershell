@@ -29,7 +29,7 @@ $SlackWebHookUrl = 'https://hooks.slack.com'
 $ServerInstance = "SQLPDB01"
 $Database = "Tablo"
 
-#Splatting Configs
+#region Splatting Configs
 $MailConfig = @{
     ErrorAction = 'STOP'
     From        = $EmailFrom
@@ -56,6 +56,7 @@ $SlackConfig = @{
     SlackWebHook = $SlackWebHookUrl
     SlackChannel = $SlackChannel
 }
+#endregion
 
 #region Functions
 #Test SQL Server Connection
@@ -368,6 +369,80 @@ function Send-SlackNotification {
     [System.Net.WebClient] $webclient = New-Object 'System.Net.WebClient'
     $webclient.UploadData($SlackWebHook, [System.Text.Encoding]::UTF8.GetBytes($postSlackMessage))
 }
+
+#Function to download recording from Tablo
+function Invoke-TabloRecordingDownload {
+    Write-Verbose "Finding all the TS files from $Recording to download and process"
+    $RecordingURI = ($TabloPVRURI + $Recording + "/segs/")
+    $RecordedLinks = ((Invoke-WebRequest -Uri $RecordingURI).links | Where-Object {($PSItem.href -match '[0-9]')}).href
+
+    Write-Verbose "Create a temporary folder to store the recording files"
+    if (!(Test-Path $Recording)) {
+        New-Item $Recording -ItemType dir
+    }
+
+    #CD to Download Directory
+    Set-Location $Recording
+    $pwd = Get-Location | Select-Object -ExpandProperty Path #Get the current working directory for the .Net client download
+
+    Write-Verbose "Checking to see if recording $Recording is currently in process or finished"
+    if ($RecIsFinished -eq 'recording') {
+        Write-Verbose "Recording $Recording in progress, do until loop to download all the clips from the Tablo, so we can join them together later"
+        do {
+            $RecordedLinks = ((Invoke-WebRequest -Uri $RecordingURI).links | Where-Object {($_.href -match '[0-9]')}).href
+            foreach ($Link in $RecordedLinks) {
+                if (!(Test-Path -Path $Link)) {
+                    (New-Object System.Net.WebClient).DownloadFile("$($RecordingURI)$($Link)", "$pwd\$Link")
+                }
+            }
+        
+            Get-TabloRecordingStatus -Recording $Recording
+            [System.GC]::Collect() #.Net method to clean up the ram
+            Start-Sleep -Seconds 5 #Sleep for a little to prevent slamming the tablo
+        } until ($RecIsFinished -eq 'finished')
+    } elseif ($RecIsFinished -eq 'finished') {
+        Write-Verbose "Recording is finished, downloading all the clips from the Tablo, so we can join them together later"
+        foreach ($Link in $RecordedLinks) {
+            (New-Object System.Net.WebClient).DownloadFile("$($RecordingURI)$($Link)", "$pwd\$Link")
+        }
+    }
+
+    #Create concatenated string for FFMPEG
+    $JoinedTSFiles = ((Get-ChildItem).Name) -join '|'
+
+    Write-Verbose "Run FFMpeg for TV Shows or Movies"
+    if ($MediaType -eq 'TV') {
+        #Check if the file we are going to create already exists and if so append a timestamp
+        Check-ForDuplicateFile $DumpDirectoryTV $FileName
+
+        #Join .TS Clips into a Master Media File for saving
+        if ($ShowExceptionsList -match $ShowName) {
+            (& $FFMPEGBinary -y -i "concat:$JoinedTSFiles" -bsf:a aac_adtstoasc -c copy $DumpDirectoryExceptions\$FileName.mp4)
+        } else {
+            (& $FFMPEGBinary -y -i "concat:$JoinedTSFiles" -bsf:a aac_adtstoasc -c copy $DumpDirectoryTV\$FileName.mp4)
+        }
+    } elseif ($MediaType -eq 'MOVIE') {
+        #Check if the file we are going to create already exists and if so append a timestamp
+        Check-ForDuplicateFile $DumpDirectoryMovies $FileName
+
+        #Join .TS Clips into a Master Media File for saving
+        (& $FFMPEGBinary -y -i "concat:$JoinedTSFiles" -bsf:a aac_adtstoasc -c copy $DumpDirectoryMovies\$FileName.mp4)
+    }
+
+    Write-Verbose "CD to Root Directory, and remove Temp Files"
+    Set-Location $TempDownload
+    Remove-Item $Recording -Recurse
+
+    Write-Verbose "Update SQL with recording as processed"
+    if ($MediaType -eq 'TV') {
+        $SQLInsert = "UPDATE [dbo].[TV_Recordings] SET Processed=1 WHERE Recid=$Recording"
+    } elseif ($MediaType -eq 'MOVIE') {
+        $SQLInsert = "UPDATE [dbo].[MOVIE_Recordings] SET Processed=1 WHERE Recid=$Recording"
+    }
+
+    Run-SQLQuery @SQLConfig -Query $SQLInsert
+    #End processing if we matched the metadata
+}
 #endregion
 
 ##########################################################################################################################################################################################################################################################################################################################
@@ -390,9 +465,9 @@ if (!(Test-Path -Path $DumpDirectoryMovies)) {
     New-Item -Path $DumpDirectoryMovies -ItemType dir
 }
 
+#Find the minimum free bytes
 Write-Verbose 'Checking for a minimum disk space before continuing'
 $DriveObject = Get-WmiObject Win32_LogicalDisk | Where-Object {($PSItem.DeviceID -eq "$($DumpDirectoryDriveLetter):")}
-#Find the minimum free bytes
 if ($DriveObject.FreeSpace -lt ($DriveObject.Size * (".$MinimumFreePercentage"))) {
     Write-Warning "Drive $DumpDirectoryDriveLetter has less than $($MinimumFreePercentage)% free, we will exit the script until this is resolved"
     if ($EmailNotifications) {
@@ -430,150 +505,128 @@ $ShowExceptionsList = Run-SQLQuery @SQLConfig -Query "SELECT * FROM [dbo].[Post_
 #Build Foreach Loop to build folders and to download the raw TS files
 foreach ($Recording in $TabloRecordings) {
 
-    #Build Metdata from $Recording and Grab JSON Data from Tablo, Will grab the required data as the TV and Movie functions are buried inside of Get-TabloMovieorTV
+    #Build metadata for $Recording
     Get-TabloRecordingMetaData $Recording
 
     #SQL Select statement since we will run multiple if statements against it
     $TVSQLSelect = Run-SQLQuery @SQLConfig -Query "SELECT Recid,Processed FROM TV_Recordings where RECID=$Recording"
 
-    #Check if we downloaded the show before
+    #Check to see if we need to process the show
     if (
-    (($TVSQLSelect.RecID -eq $null) -or ($TVSQLSelect.Processed -like $null)) -and 
-    ((Run-SQLQuery @SQLConfig -Query "SELECT RecID FROM MOVIE_Recordings WHERE RECID=$Recording") -eq $null) -and
-    ($RecIsFinished -match "finished|recording") -and
-    ($NoMetaData -notmatch $false)) {
+    (($TVSQLSelect.RecID -eq $null) -or ($TVSQLSelect.Processed -like $null)) -and #Make sure the RecID is null and processed has not been set
+    ((Run-SQLQuery @SQLConfig -Query "SELECT RecID FROM MOVIE_Recordings WHERE RECID=$Recording") -eq $null) -and #Make sure we are not processing a movie
+    ($RecIsFinished -match "finished|recording") -and #See if the recording status is finished or recording
+    ($NoMetaData -notmatch $false)) { #Verify we have valid metadata for the file
+
+        #This is the indent level for the primary if statement
+        Write-Verbose "Building the database entry for $Recording"
+        #Build Entry to Put into Tablo Database
+        $DatabaseEntry = New-Object PSObject -Property @{
+            FileName = $FileName -replace "'","''"
+            EpisodeName = $EpisodeName -replace "'","''"
+            Show = $ShowName -replace "'","''"
+            AirDate = $EpisodeOriginalAirDate
+            PostProcessDate = (Get-Date)
+            Description = $EpisodeDescription -replace "'","''"
+            RecID = $Recording
+            Media = $MediaType
+            EpisodeSeason = $EpisodeSeason
+            EpisodeNumber = $EpisodeNumber
+        }
+
+        Write-Verbose "Detecting for warnings on recording $Recording"
+        if ($Script:EpisodeWarnings -notlike $null) {
+            Write-Verbose "Warnings were detected on recording $Recording"
+            $Script:EpisodeWarnings
+            
+            Write-Verbose 'Sending notifications'
+            if ($EmailNotifications) {
+                Write-Verbose 'Sending Email Notification'
+                Send-MailMessage @MailConfig -Subject "Failed Recording (Length): $($Script:FileName)"
+            }
+            if ($SlackNotifications) {
+                Write-Verbose 'Sending Slack Notification'
+                Send-SlackNotification @SlackConfig -Message "Failed Recording (Length): $($Script:FileName)"
+            }
+
+            #Overwrite the EpisodeWarnings variable to true for the SQL query flag
+            $Script:EpisodeWarnings = $true
+        }
+
+        #Check if the show exists in the Shows table if not add it to [TV_Shows]
+        if (!(Run-SQLQuery @SQLConfig -Query "SELECT SHOW FROM [dbo].[TV_Shows] WHERE SHOW = '$($DatabaseEntry.show)'").Show -eq $DatabaseEntry.Show) {
+            #Update SQL with New Show
+            Run-SQLQuery @SQLConfig -Query "INSERT INTO [dbo].[TV_Shows] (Show) VALUES ('$($DatabaseEntry.Show)')"
+
+            if ($EnableSickRageSupport) {
+                Write-Verbose "Adding $($DatabaseEntry.Show) to SickRage"
+                Add-ToSickRage -ShowName $DatabaseEntry.Show -SickRageAPIKey $SickRageAPIKey -SickRageURL $SickRageURL
+            }
+        }
+
+        Write-Verbose 'Finding out if recording is a TV show or Movie'
+        if ($MediaType -eq 'TV') {
+            Write-Verbose 'Building SQL Insert to insert entry into [Movie_Recordings]'
+            $SQLInsert = "INSERT INTO [dbo].[TV_Recordings] (RecID,FileName,EpisodeName,Show,EpisodeNumber,EpisodeSeason,AirDate,PostProcessDate,Description,Media) VALUES ('$($DatabaseEntry.RecID)','$($DatabaseEntry.FileName)','$($DatabaseEntry.EpisodeName)','$($DatabaseEntry.Show)','$($DatabaseEntry.EpisodeNumber)','$($DatabaseEntry.EpisodeSeason)','$($DatabaseEntry.AirDate)','$($DatabaseEntry.PostProcessDate)','$($DatabaseEntry.Description)','$($DatabaseEntry.Media)')"
+        } elseif ($MediaType -eq 'MOVIE') {
+            Write-Verbose 'Building SQL Insert to insert entry into [Movie_Recordings]'
+            $SQLInsert = "INSERT INTO [dbo].[MOVIE_Recordings] (RecID,FileName,AirDate,PostProcessDate,Media,Processed) VALUES ('$($DatabaseEntry.RecID)','$($DatabaseEntry.FileName)','$($DatabaseEntry.AirDate)','$($DatabaseEntry.PostProcessDate)','$($DatabaseEntry.Media)')"
+        }
+        Run-SQLQuery @SQLConfig -Query $SQLInsert
+
+    } elseif (!(($TVSQLSelect.Recid -notlike $null) -and ($TVSQLSelect.Processed -like $null))) {
+        Write-Verbose "Recording $Recording was detected as a failed download, and we will reprocess it"
+        Invoke-TabloRecordingDownload
+    } elseif ($NoMetaData -eq $false) {
+        Write-Output "$Recording does not have any metadata, skipping"
+    } else {
+        Write-Output "$Recording has already been downloaded and processed"
+    }
+
+
+
+} #End foreach loop
+
+
+
+
+
+
 
             Write-Verbose "Set File name depending on Exceptions List, this needs to go up top to correctly store Air Date Exceptions in SQL"
             if ($ShowAirDateExceptionsList -match $ShowName) {
                 $FileName = $FileNameAirDate
             } #Else we will use the the $FileName defined in the metadata function(s)
 
-            #Build Entry to Put into Tablo Database
-            $DatabaseEntry = New-Object PSObject -Property @{
-                FileName = $FileName -replace "'","''"
-                EpisodeName = $EpisodeName -replace "'","''"
-                Show = $ShowName -replace "'","''"
-                AirDate = $EpisodeOriginalAirDate
-                PostProcessDate = (Get-Date)
-                Description = $EpisodeDescription -replace "'","''"
-                RecID = $Recording
-                Media = $MediaType
-                EpisodeSeason = $EpisodeSeason
-                EpisodeNumber = $EpisodeNumber
-            }
 
             #Check if we are processing a failed download, if not insert everything into SQL
             if (!(($TVSQLSelect.Recid -notlike $null) -and ($TVSQLSelect.Processed -like $null))) {
-                Write-Verbose "Build SQL Query to insert the DataBase Entry into the Database"
-                if ($MediaType -eq 'TV') {
-                #Check if the show exists in the Shows table if not add it to [TV_Shows]
-                if (!(Run-SQLQuery @SQLConfig -Query "SELECT SHOW FROM [dbo].[TV_Shows] WHERE SHOW = '$($DatabaseEntry.show)'").Show -eq $DatabaseEntry.Show) {
-                    #Update SQL with New Show
-                    Run-SQLQuery @SQLConfig -Query "INSERT INTO [dbo].[TV_Shows] (Show) VALUES ('$($DatabaseEntry.Show)')"
+Write-Verbose "Build SQL Query to insert the DataBase Entry into the Database"
+if ($MediaType -eq 'TV') {
+#Check if the show exists in the Shows table if not add it to [TV_Shows]
+if (!(Run-SQLQuery @SQLConfig -Query "SELECT SHOW FROM [dbo].[TV_Shows] WHERE SHOW = '$($DatabaseEntry.show)'").Show -eq $DatabaseEntry.Show) {
+#Update SQL with New Show
+Run-SQLQuery @SQLConfig -Query "INSERT INTO [dbo].[TV_Shows] (Show) VALUES ('$($DatabaseEntry.Show)')"
 
-                    Write-Verbose "Adding New Show to SickRage if SickRage Support is enabled"
-                    if ($EnableSickRageSupport) {
-                        Add-ToSickRage -ShowName $DatabaseEntry.Show -SickRageAPIKey $SickRageAPIKey -SickRageURL $SickRageURL
-                    }
-                }
-                    if ($Script:EpisodeWarnings -contains "http://api.slipstream.nuvyyo.com/warning/recording/tooShort") {
-                        Run-SQLQuery @SQLConfig -Query "INSERT INTO TV_Recordings_Warning (RecID,Show,EpisodeSeason,EpisodeNumber,AirDate,Warnings) VALUES ('$($DatabaseEntry.RecID)','$($DatabaseEntry.Show)','$($DatabaseEntry.EpisodeSeason)','$($DatabaseEntry.EpisodeNumber)','$($DatabaseEntry.AirDate)','$($Script:EpisodeWarnings)')"
-                        if ($EmailNotifications) {
-                            Send-MailMessage @MailConfig -Subject "Failed Recording (Length): $($Script:FileName)"
-                        }
-
-                        if ($SlackNotifications) {
-                            Send-SlackNotification @SlackConfig -Message "Failed Recording (Length): $($Script:FileName)"
-                        }
-                    }
-                    else {
-                        Write-Verbose "Build SQL Insert to insert the entry into SQL [TV_Recordings]"
-                        $SQLInsert = "INSERT INTO [dbo].[TV_Recordings] (RecID,FileName,EpisodeName,Show,EpisodeNumber,EpisodeSeason,AirDate,PostProcessDate,Description,Media) VALUES ('$($DatabaseEntry.RecID)','$($DatabaseEntry.FileName)','$($DatabaseEntry.EpisodeName)','$($DatabaseEntry.Show)','$($DatabaseEntry.EpisodeNumber)','$($DatabaseEntry.EpisodeSeason)','$($DatabaseEntry.AirDate)','$($DatabaseEntry.PostProcessDate)','$($DatabaseEntry.Description)','$($DatabaseEntry.Media)')"
-                    }
-                } elseif ($MediaType -eq 'MOVIE') {
-                    $SQLInsert = "INSERT INTO [dbo].[MOVIE_Recordings] (RecID,FileName,AirDate,PostProcessDate,Media,Processed) VALUES ('$($DatabaseEntry.RecID)','$($DatabaseEntry.FileName)','$($DatabaseEntry.AirDate)','$($DatabaseEntry.PostProcessDate)','$($DatabaseEntry.Media)')"
-                }
-                Run-SQLQuery @SQLConfig -Query $SQLInsert
+Write-Verbose "Adding New Show to SickRage if SickRage Support is enabled"
+if ($EnableSickRageSupport) {
+Add-ToSickRage -ShowName $DatabaseEntry.Show -SickRageAPIKey $SickRageAPIKey -SickRageURL $SickRageURL
+}
+}
+else {
+Write-Verbose "Build SQL Insert to insert the entry into SQL [TV_Recordings]"
+$SQLInsert = "INSERT INTO [dbo].[TV_Recordings] (RecID,FileName,EpisodeName,Show,EpisodeNumber,EpisodeSeason,AirDate,PostProcessDate,Description,Media) VALUES ('$($DatabaseEntry.RecID)','$($DatabaseEntry.FileName)','$($DatabaseEntry.EpisodeName)','$($DatabaseEntry.Show)','$($DatabaseEntry.EpisodeNumber)','$($DatabaseEntry.EpisodeSeason)','$($DatabaseEntry.AirDate)','$($DatabaseEntry.PostProcessDate)','$($DatabaseEntry.Description)','$($DatabaseEntry.Media)')"
+}
+} elseif ($MediaType -eq 'MOVIE') {
+$SQLInsert = "INSERT INTO [dbo].[MOVIE_Recordings] (RecID,FileName,AirDate,PostProcessDate,Media,Processed) VALUES ('$($DatabaseEntry.RecID)','$($DatabaseEntry.FileName)','$($DatabaseEntry.AirDate)','$($DatabaseEntry.PostProcessDate)','$($DatabaseEntry.Media)')"
+}
+Run-SQLQuery @SQLConfig -Query $SQLInsert
             } else {
                 #Remove the folder and start over, we want good files and not bad files
                 Remove-Item $Recording -Recurse -Force
             }
 
-            Write-Verbose "Build Variables to Download TS recorded files"
-            $RecordingURI = ($TabloPVRURI + $Recording + "/segs/")
-            $RecordedLinks = ((Invoke-WebRequest -Uri $RecordingURI).links | Where-Object {($PSItem.href -match '[0-9]')}).href
-
-            Write-Verbose "Create a temporary folder to store the recording files"
-            if (!(Test-Path $Recording)) {
-                New-Item $Recording -ItemType dir
-            }
-
-            #CD to Download Directory
-            Set-Location $Recording
-            $pwd = Get-Location | Select-Object -ExpandProperty Path #Get the current working directory for the .Net client download
-
-            if ($RecIsFinished -eq 'recording') {
-                Write-Verbose "Recording in progress, do until loop to download all the clips from the Tablo, so we can join them together later"
-                do {
-                    $RecordedLinks = ((Invoke-WebRequest -Uri $RecordingURI).links | Where-Object {($_.href -match '[0-9]')}).href
-                    foreach ($Link in $RecordedLinks) {
-                        if (!(Test-Path -Path $Link)) {
-                            (New-Object System.Net.WebClient).DownloadFile("$($RecordingURI)$($Link)", "$pwd\$Link")
-                        }
-                    }
-                    Get-TabloRecordingStatus -Recording $Recording
-                    [System.GC]::Collect() #.Net method to clean up the ram
-                    Start-Sleep -Seconds 5 #Sleep for a little to prevent slamming the tablo
-                } until ($RecIsFinished -eq 'finished')
-            } elseif ($RecIsFinished -eq 'finished') {
-                Write-Verbose "Recording is finished, downloading all the clips from the Tablo, so we can join them together later"
-                foreach ($Link in $RecordedLinks) {
-                    (New-Object System.Net.WebClient).DownloadFile("$($RecordingURI)$($Link)", "$pwd\$Link")
-                }
-            }
-
-            #Create String for FFMPEG
-            $JoinedTSFiles = ((Get-ChildItem).Name) -join '|'
-
-            Write-Verbose "Run FFMpeg for TV Shows or Movies"
-            if ($MediaType -eq 'TV') {
-                #Check if the file we are going to create already exists and if so append a timestamp
-                Check-ForDuplicateFile $DumpDirectoryTV $FileName
-
-                #Join .TS Clips into a Master Media File for saving
-                if ($ShowExceptionsList -match $ShowName) {(& $FFMPEGBinary -y -i "concat:$JoinedTSFiles" -bsf:a aac_adtstoasc -c copy $DumpDirectoryExceptions\$FileName.mp4)}
-                else {
-                    (& $FFMPEGBinary -y -i "concat:$JoinedTSFiles" -bsf:a aac_adtstoasc -c copy $DumpDirectoryTV\$FileName.mp4)
-                }
-            } elseif ($MediaType -eq 'MOVIE') {
-                #Check if the file we are going to create already exists and if so append a timestamp
-                Check-ForDuplicateFile $DumpDirectoryMovies $FileName
-
-                #Join .TS Clips into a Master Media File for saving
-                (& $FFMPEGBinary -y -i "concat:$JoinedTSFiles" -bsf:a aac_adtstoasc -c copy $DumpDirectoryMovies\$FileName.mp4)
-            }
-
-            Write-Verbose "CD to Root Directory, and remove Temp Files"
-            Set-Location $TempDownload
-            Remove-Item $Recording -Recurse
-
-            Write-Verbose "Update SQL with recording as processed"
-            if ($MediaType -eq 'TV') {
-                $SQLInsert = "UPDATE [dbo].[TV_Recordings] SET Processed=1 WHERE Recid=$Recording"
-            } elseif ($MediaType -eq 'MOVIE') {
-                $SQLInsert = "UPDATE [dbo].[MOVIE_Recordings] SET Processed=1 WHERE Recid=$Recording"
-            }
-
-            Run-SQLQuery @SQLConfig -Query $SQLInsert
-            #End processing if we matched the metadata
-        } else {
-            if ($NoMetaData -eq $false) {
-                Write-Output "$Recording does not have any metadata, skipping"
-        } else {
-            Write-Output "$Recording has already been downloaded"
-        }
-    }
-
+        
     #Clear Varibles that can cause issues, outside of the if statement so the variables are removed every time
     Remove-Variable RecIsFinished -ErrorAction SilentlyContinue
     Remove-Variable DatabaseEntry -ErrorAction SilentlyContinue
@@ -590,5 +643,5 @@ foreach ($Recording in $TabloRecordings) {
     Remove-Variable EpisodeSeason -ErrorAction SilentlyContinue
     Remove-Variable EpisodeNumber -ErrorAction SilentlyContinue
 
-    [System.GC]::Collect() #.Net method to clean up the ram
+    [System.GC]::Collect() #.Net method to run garbage collection
 }
