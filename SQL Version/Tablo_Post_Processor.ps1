@@ -585,7 +585,7 @@ foreach ($Recording in $TabloRecordings) {
             Write-Verbose "Invoking the Tablo download function on recording $Recording"
             Invoke-TabloRecordingDownload
         }
-    } elseif (!(($TVSQLSelect.Recid -notlike $null) -and ($TVSQLSelect.Processed -like $null))) {
+    } elseif (($TVSQLSelect.Recid -notlike $null) -and ($TVSQLSelect.Processed -like $null)) {
         Write-Verbose "Recording $Recording was detected as a failed download, and we will reprocess it"
         Remove-Item $Recording -Recurse -Force -ErrorAction SilentlyContinue #Remove the folder and start over, we want good files and not bad files
         
