@@ -514,7 +514,6 @@ foreach ($Recording in $TabloRecordings) {
     #Check to see if we need to process the show
     if (
     (($TVSQLSelect.RecID -eq $null) -or ($TVSQLSelect.Processed -like $null)) -and #Make sure the RecID is null and processed has not been set
-    (!($TVSQLSelect.Warnings)) -and
     ((Run-SQLQuery @SQLConfig -Query "SELECT RecID FROM MOVIE_Recordings WHERE RECID=$Recording") -eq $null) -and #Make sure we are not processing a movie
     ($RecIsFinished -match "finished|recording") -and #See if the recording status is finished or recording
     ($NoMetaData -notmatch $false)) { #Verify we have valid metadata for the file
