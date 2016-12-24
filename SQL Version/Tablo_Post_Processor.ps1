@@ -542,11 +542,11 @@ foreach ($Recording in $TabloRecordings) {
             Write-Verbose 'Sending notifications'
             if ($EmailNotifications) {
                 Write-Verbose 'Sending Email Notification'
-                Send-MailMessage @MailConfig -Subject "Failed Recording (Length): $($Script:FileName)"
+                Send-MailMessage @MailConfig -Subject "Failed Recording (Length): $($Script:FileName), $Recording"
             }
             if ($SlackNotifications) {
                 Write-Verbose 'Sending Slack Notification'
-                Send-SlackNotification @SlackConfig -Message "Failed Recording (Length): $($Script:FileName)"
+                Send-SlackNotification @SlackConfig -Message "Failed Recording (Length): $($Script:FileName), $Recording"
             }
 
             #Overwrite the EpisodeWarnings variable to true for the SQL query flag
