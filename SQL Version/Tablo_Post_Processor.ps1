@@ -225,96 +225,151 @@ function Get-OpenMovieDataBaseByID ($IMDBId) {
     (Invoke-RestMethod @RestConfigGet -Uri "http://www.omdbapi.com/?i=$($IMDBId)&plot=short&r=json")
 }
 
-#Function to auto add new shows to SickRage
-Function Add-ToSickRage ($ShowName,$SickRageAPIKey,$SickRageURL) {
-    #Find the TVDB ID
-    Try {
-        $TVDBResults = Invoke-RestMethod @RestConfigGet -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=sb.searchtvdb&name=$ShowName"
-    } Catch [System.Net.WebException] {
-        if ($EmailNotifications) {
-            Send-MailMessage @MailConfig -Subject 'An Error occured while calling the SickRage API'
+Function Add-ToSickRage {
+    [CmdletBinding(DefaultParameterSetName='ByGuess')]
+    param (
+        [Parameter(Mandatory = $false, ParameterSetName = 'ByGuess')]
+        [String]$ShowName,
+
+        [Parameter(Mandatory = $true, Position=0)]
+        [String]$SickRageAPIKey,
+
+        [Parameter(Mandatory = $true, Position=1)]
+        [String]$SickRageURL,
+
+        [Parameter(Mandatory = $true, ParameterSetName = 'ByForce')]
+        [Switch]$ForceAdd = $false,
+
+        [Parameter(Mandatory = $true, ParameterSetName = 'ByForce')]
+        [string]$ShowID
+    )
+    if ($ForceAdd) {
+        Write-Verbose 'Forced mode was detected, we are assuming that all data is 100% accurate'
+        Try {
+            Write-Verbose 'Finding Shows metadata to send in notification'
+            $TVDBQuery = Invoke-RestMethod @RestConfigGet -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=sb.searchtvdb&tvdbid=$ShowID"
+            $TVDBResults = (Invoke-RestMethod @RestConfigGet -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=show.addnew&future_status=skipped&lang=en&tvdbid=$($ShowID)")
+            if ($TVDBResults.result -eq 'failure') {
+                if ($EmailNotifications) {
+                    Send-MailMessage @MailConfig -Subject "$ShowID '$Script:ShowName' returned a failure" -Body "The error message is: $($TVDBResults.message)" #Yes use $Script:ShowName and not $ShowName here
+                }
+
+                if ($SlackNotifications) {
+                    Send-SlackNotification @SlackConfig -Message "$ShowID '$Script:ShowName' returned a failure, the error message is: $($TVDBResults.message)" #Yes use $Script:ShowName and not $ShowName here
+                }
+            } else {
+                #Send a notification of the Show we added to SickRage        
+                if ($EmailNotifications) {
+                    Send-MailMessage @MailConfig -Subject "New Show '$($TVDBQuery.data.results.name)' Auto added to SickRage"
+                }
+
+                if ($SlackNotifications) {
+                    Send-SlackNotification @SlackConfig -Message "New Show '$($TVDBQuery.data.results.name)' Auto added to SickRage"
+                }
+            } 
+        } Catch [System.Net.WebException] {
+            if ($EmailNotifications) {
+                Send-MailMessage @MailConfig -Subject 'An Error occured while calling the SickRage API'
+            }
+
+            if ($SlackNotifications) {
+                Send-SlackNotification @SlackConfig -Message 'An Error occured while calling the SickRage API'
+            }
+        } #End Try/Catch for WebException
+    #End ForceAdd
+    } else {
+        #Begin Non ForceAdd else statement
+        Write-Verbose 'Non forced mode was detected, doing normal processes'
+        Try {
+            $TVDBResults = (Invoke-RestMethod @RestConfigGet -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=sb.searchtvdb&name=$ShowName")
+        } Catch [System.Net.WebException] {
+            if ($EmailNotifications) {
+                Send-MailMessage @MailConfig -Subject 'An Error occured while calling the SickRage API'
+            }
+
+            if ($SlackNotifications) {
+                Send-SlackNotification @SlackConfig -Message 'An Error occured while calling the SickRage API'
+            }
         }
 
-        if ($SlackNotifications) {
-            Send-SlackNotification @SlackConfig -Message 'An Error occured while calling the SickRage API'
-        }
-    }
- 
-    #Verify we successfully ran the query, and atleast 1 or more data results as well as the result is in english
-    If (($TVDBResults.result -eq 'success') -and ($TVDBResults.data.results.name -ge 1) -and ($TVDBResults.data.langid -eq 7)) {
-        #Select the correct results based upon the most recent show
-        $TVDBObjects = $TVDBResults.data.results | Where-Object {($PSItem.first_aired -notlike 'Unknown')} | Sort-Object first_aired -Descending
+        #Verify we successfully ran the query, and atleast 1 or more data results as well as the result is in english
+        If (($TVDBResults.result -eq 'success') -and ($TVDBResults.data.results.name -ge 1) -and ($TVDBResults.data.langid -eq 7)) {
+            Write-Verbose 'Entering if loop, we had a success, 1 or more entries and there in english!'
+            #Select the correct results based upon the most recent show
+            $TVDBObjects = $TVDBResults.data.results | Where-Object {($PSItem.first_aired -notlike 'Unknown')} | Sort-Object first_aired -Descending
 
-        #If only 1 entry was returned it is useless to continue the logic so we will go with it, else we will loop through some logic
-        if ($TVDBObjects.Count -eq 1) {
-            #Add the show to SickRage
-            Write-Verbose "Added $($TVDBObjects.tvdbid) - $($TVDBObjects.Name) to SickRage as it was the only valid entry"
-            Invoke-RestMethod @RestConfigGet -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=show.addnew&future_status=skipped&lang=en&tvdbid=$($TVDBObjects.tvdbid)"
-        } else {
-            foreach ($TVDBObject in $TVDBObjects) {
-                Write-Host "Working on $($TVDBObject.tvdbid)"
-                #Compare the dates to see if this is an accurate listing
-                $IMDBID = (Get-TVDBSeriesInformationByID -ShowID $TVDBObject.tvdbid -TVDBAPIKey $TVDBAPIKey -TVDBUserKey $TVDBUserKey).imdbid
-                $OMDBEntry = Get-OpenMovieDataBaseByID -IMDBId $IMDBID
+            #If only 1 entry was returned it is useless to continue the logic so we will go with it, else we will loop through some logic
+            if ($TVDBObjects.Count -eq 1) {
+                Write-Verbose 'Only 1 entry was found, were running with that!'
+                $TVDBObject = $TVDBObjects #This is purely so I quit getting confused when testing, plus its singular and not plural :)
 
-                #Check to make sure we got a valid response from IMDB/OMDB
-                if ($OMDBEntry.Response -notlike $false) {
-                    #Split the years of the IMDB/OMDB Entry
-                    $OMDBYears = $OMDBEntry.Year.Split('–') | Where-Object {($PSItem -notlike $null)}
-                    #If a show if new we can only check if the air date is newer or equal to what IMDB/OMDB tells us our series run time is, if not we will continue below
-                    if ($OMDBYears.Count -eq 1) {
-                        Write-Verbose "OMDBYears has only one entry, we will now test that date against EpisodeOriginalAirDate"
-                        $OMDBEpisodeOriginalAirDateYYYY = ($EpisodeOriginalAirDate | Get-Date -Format 'yyyy')
-                        if ($OMDBYears -ge $OMDBEpisodeOriginalAirDateYYYY) {
-                            $ShowIDInformation = New-Object PSObject -Property @{
-                                ShowName = $ShowName
-                                IMDBID = $IMDBID
-                                TVDBID = $TVDBObject.tvdbid
-                                YearsRunTime = $OMDBEntry.Year.Split('–')[0]
-                                WithinYearRunTime = $true
+                #Add the show to SickRage
+                Add-ToSickRage -SickRageAPIKey $SickRageAPIKey -SickRageURL $SickRageURL -ForceAdd -ShowID $($TVDBObject.tvdbid)
+                Write-Verbose "Added $($TVDBObject.tvdbid) - $($TVDBObject.Name) to SickRage as it was the only valid entry"
+            } else {
+                Write-Verbose 'More than one entry was found, were going to find the most correct one'
+                $array = @() #Build a blank array so we can hold our objects in
+                foreach ($TVDBObject in $TVDBObjects) {
+                    Write-Host "Working on $($TVDBObject.tvdbid)"
+                    #Compare the dates to see if this is an accurate listing
+                    $IMDBID = (Get-TVDBSeriesInformationByID -ShowID $TVDBObject.tvdbid -TVDBAPIKey $TVDBAPIKey -TVDBUserKey $TVDBUserKey).imdbid
+                    $OMDBEntry = Get-OpenMovieDataBaseByID -IMDBId $IMDBID
+
+                    #Check to make sure we got a valid response from IMDB/OMDB
+                    if ($OMDBEntry.Response) {
+                        #Split the years of the IMDB/OMDB Entry
+                        $OMDBYears = $OMDBEntry.Year.Split('–') | Where-Object {($PSItem -notlike $null)}
+                        #If a show if new we can only check if the air date is newer or equal to what IMDB/OMDB tells us our series run time is, if not we will continue below
+                        if ($OMDBYears.Count -eq 1) {
+                            Write-Verbose "OMDBYears has only one entry, we will now test that date against EpisodeOriginalAirDate"
+                            $OMDBEpisodeOriginalAirDateYYYY = ($EpisodeOriginalAirDate | Get-Date -Format 'yyyy')
+                            if ($OMDBYears -ge $OMDBEpisodeOriginalAirDateYYYY) {
+                                $ShowIDInformation = New-Object PSObject -Property @{
+                                    ShowName = $ShowName
+                                    IMDBID = $IMDBID
+                                    TVDBID = $TVDBObject.tvdbid
+                                    YearsRunTime = $OMDBEntry.Year.Split('–')[0]
+                                    WithinYearRunTime = $true
+                                }
+                                Write-Verbose 'We have successfully verified the EpisodeOriginalAirDate against IMDB/OMDB, keeping this in memory for later'
+                            } else {
+                                Write-Verbose 'TVDB said the show aired before OMDB said it did'
                             }
-                            Write-Verbose "We have successfully verified the EpisodeOriginalAirDate against IMDB/OMDB, keeping this in memory for later"
-                        }
-                    } else {
-                        Write-Verbose "OMDBYears had more than 1 date, we will test the logic now"
-                        #See if we are within the date range of our air date and what IMDB/OMDB tells us our series run time is
-                        if (($OMDBYears[0] -ge $OMDBEpisodeOriginalAirDateYYYY) -and ($OMDBEpisodeOriginalAirDateYYYY -le $OMDBYears[-1])) {
-                            $ShowIDInformation = New-Object PSObject -Property @{
-                                ShowName = $ShowName
-                                IMDBID = $IMDBID
-                                TVDBID = $TVDBObject.tvdbid
-                                YearsRunTime = $OMDBEntry.Year
-                                WithinYearRunTime = $true
-                            }
-                            Write-Verbose "We were able to successfully verify that EpisodeOriginalAirDate Matches IMDB/OMDB"
                         } else {
-                            $ShowIDInformation = New-Object PSObject -Property @{
-                                ShowName = $ShowName
-                                IMDBID = $IMDBID
-                                TVDBID = $TVDBObject.tvdbid
-                                YearsRunTime = $OMDBEntry.Year
-                                WithinYearRunTime = $false
+                            Write-Verbose "OMDBYears had more than 1 date, we will test the logic now"
+                            #See if we are within the date range of our air date and what IMDB/OMDB tells us our series run time is
+                            if (($OMDBYears[0] -ge $OMDBEpisodeOriginalAirDateYYYY) -and ($OMDBEpisodeOriginalAirDateYYYY -le $OMDBYears[-1])) {
+                                $ShowIDInformation = New-Object PSObject -Property @{
+                                    ShowName = $ShowName
+                                    IMDBID = $IMDBID
+                                    TVDBID = $TVDBObject.tvdbid
+                                    YearsRunTime = $OMDBEntry.Year
+                                    WithinYearRunTime = $true
+                                }
+                                Write-Verbose "We were able to successfully verify that EpisodeOriginalAirDate Matches IMDB/OMDB"
+                            } else {
+                                $ShowIDInformation = New-Object PSObject -Property @{
+                                    ShowName = $ShowName
+                                    IMDBID = $IMDBID
+                                    TVDBID = $TVDBObject.tvdbid
+                                    YearsRunTime = $OMDBEntry.Year
+                                    WithinYearRunTime = $false
+                                }
+                                Write-Verbose "Unable to verify that EpisodeOriginalAirDate Matches IMDB/OMDB"
                             }
-                            Write-Verbose "Unable to verify that EpisodeOriginalAirDate Matches IMDB/OMDB"
+                        } 
+                        #Check if our logic statements above said we are good to go!
+                        if ($ShowIDInformation.WithinYearRunTime) {
+                            Write-Output "We would add $($TVDBObject.tvdbid) to sickrage"
+                            $array += $TVDBObject #Adding to the array so we can pick a entry athe en
                         }
-                    }
-                    #Check if our logic statements above said we are good to go!
-                    if ($ShowIDInformation.WithinYearRunTime) {
-                        #Add the show to SickRage
-                        Invoke-RestMethod @RestConfigGet -Uri "$SickRageURL/api/$SickRageAPIKey/?cmd=show.addnew&future_status=skipped&lang=en&tvdbid=$($TVDBObject.tvdbid)"
-                        Write-Host "We would add $($TVDBObject.tvdbid) to sickrage"
-                    }
-                } #End of if Statement for Response validity
-            } #End foreach loop
-        } #End TVDBObjects Count
-        
-        #Send a notification of the Show we added to SickRage        
-        if ($EmailNotifications) {
-            Send-MailMessage @MailConfig -Subject "New Show '$($TVDBObject.name)' Auto added to SickRage"
-        }
-
-        if ($SlackNotifications) {
-            Send-SlackNotification @SlackConfig -Message "New Show '$($TVDBObject.name)' Auto added to SickRage"
+                    } #End of if Statement for Response validity
+                    Remove-Variable ShowIDInformation -ErrorAction SilentlyContinue #Remove the variable otherwise it will cause false positives, on the next loop interation
+                } #End foreach loop
+                Write-Verbose 'Adding the most correct TVDBObject to SickRage'
+                $array[0].tvdbid
+                #Add-ToSickRage -SickRageAPIKey $SickRageAPIKey -SickRageURL $SickRageURL -ForceAdd -ShowID $array[0].tvdbid #The top entry is the most correct
+            } #End else statement for TVDbObjects if we have greater than or 1 object
         }
     }
 }
