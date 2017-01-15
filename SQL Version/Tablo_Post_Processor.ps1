@@ -490,12 +490,12 @@ function Invoke-TabloRecordingDownload {
 
     Write-Verbose "Update SQL with recording as processed"
     if ($MediaType -eq 'TV') {
-        $SQLInsert = "UPDATE [dbo].[TV_Recordings] SET Processed=1 WHERE Recid=$Recording"
+        $SQLUpdate = "UPDATE [dbo].[TV_Recordings] SET Processed=1 WHERE Recid=$Recording"
     } elseif ($MediaType -eq 'MOVIE') {
-        $SQLInsert = "UPDATE [dbo].[MOVIE_Recordings] SET Processed=1 WHERE Recid=$Recording"
+        $SQLUpdate = "UPDATE [dbo].[MOVIE_Recordings] SET Processed=1 WHERE Recid=$Recording"
     }
 
-    Run-SQLQuery @SQLConfig -Query $SQLInsert
+    Run-SQLQuery @SQLConfig -Query $SQLUpdate
     #End processing if we matched the metadata
 }
 #endregion
@@ -630,7 +630,19 @@ foreach ($Recording in $TabloRecordings) {
         }
 
         Write-Verbose "Inserting recording $Recording into SQL"
-        Run-SQLQuery @SQLConfig -Query $SQLInsert
+        Try {
+            Run-SQLQuery @SQLConfig -Query $SQLInsert
+        } Catch {
+            Write-Verbose 'Sending notifications'
+            if ($EmailNotifications) {
+                Write-Verbose 'Sending Email Notification'
+                Send-MailMessage @MailConfig -Subject "Failed to insert $($DatabaseEntry.RecID) into SQL: $SQLInsert"
+            }
+            if ($SlackNotifications) {
+                Write-Verbose 'Sending Slack Notification'
+                Send-SlackNotification @SlackConfig -Message "Failed to insert $($DatabaseEntry.RecID) into SQL: $SQLInsert"
+            }
+        }
 
         Write-Verbose "Set File name depending on Exceptions List, this needs to go up top to correctly store Air Date Exceptions in SQL"
         if ($ShowAirDateExceptionsList -match $ShowName) {
