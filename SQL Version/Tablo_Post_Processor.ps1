@@ -368,7 +368,7 @@ Function Add-ToSickRage {
                 } #End foreach loop
                 Write-Verbose 'Adding the most correct TVDBObject to SickRage'
                 $array[0].tvdbid
-                #Add-ToSickRage -SickRageAPIKey $SickRageAPIKey -SickRageURL $SickRageURL -ForceAdd -ShowID $array[0].tvdbid #The top entry is the most correct
+                Add-ToSickRage -SickRageAPIKey $SickRageAPIKey -SickRageURL $SickRageURL -ForceAdd -ShowID $array[0].tvdbid #The top entry is the most correct
             } #End else statement for TVDbObjects if we have greater than or 1 object
         }
     }
